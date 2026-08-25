@@ -51,7 +51,8 @@ npx aphelion --open
 - **Timing:** source event time, local receipt time, capture lag, connection duration, and
   declared-to-effect latency when a request ID joins the phases.
 
-Block and setting evidence stays structural. A page edit can show that `core/heading.level`
+Block and setting evidence stays structural. The site's public title is retained as place identity;
+a page edit can show that `core/heading.level`
 changed and a nested `core/button.backgroundColor` was added without storing the block text,
 attribute values, option values, credentials, or Ability inputs/results.
 
@@ -163,6 +164,7 @@ Common options:
 | --- | --- |
 | `--open` | Open the loopback board after startup. |
 | `--port <number>` | Preferred loopback port; Aphelion falls forward if it is occupied. |
+| `--idle-timeout <minutes>` | End a session after this much non-heartbeat inactivity; defaults provisionally to 30 minutes. |
 | `--site <url>` | Record a site target instead of a repository target. |
 | `--audit-log <path>` | Tail the site-local audit mu-plugin JSONL. |
 | `--debug-log <path>` | Tail a WordPress debug log with capture-boundary redaction. |

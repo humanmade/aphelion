@@ -91,7 +91,8 @@ and `presence.error`/`presence.reconnect` around a temporary failure. Its WP-CLI
 marked and suppressed at the mu-plugin boundary so the observer does not record itself.
 It retries after failure rather than turning one unavailable CLI or SSH process
 into a permanently dead observer. Runtime baselines contain option names,
-types, and opaque fingerprints only; they do not become a second content log.
+types, and opaque fingerprints only. The public site title is retained separately as
+site identity; runtime snapshots do not become a second content log.
 
 ### WordPress context without content leakage
 

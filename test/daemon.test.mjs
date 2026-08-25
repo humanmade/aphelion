@@ -110,3 +110,54 @@ test('daemon rejects browser-origin requests from non-loopback sites', async t =
   assert.equal(response.status, 403)
   await daemon.close('test')
 })
+
+test('daemon ends an idle session and opens a new session for the next activity', async t => {
+  const root = fixture(t)
+  const trailDirectory = path.join(root, 'trails')
+  const daemon = await startDaemon({ target: root, trailDirectory, port: 6160, watch: false, idleTimeoutMs: 60 })
+  t.after(() => daemon.close('test'))
+  const firstSessionId = daemon.sessionId
+  const firstTrailPath = daemon.trailPath
+
+  await new Promise(resolve => setTimeout(resolve, 25))
+  const heartbeat = await fetch(`${daemon.url}/ingest`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ source: 'wp', kind: 'presence.heartbeat', data: { connectionId: 'idle-test', channel: 'wp-cli' } }),
+  }).then(response => response.json())
+  assert.equal(heartbeat.accepted, true)
+
+  await assert.doesNotReject(async () => {
+    const deadline = Date.now() + 1_000
+    while (Date.now() < deadline) {
+      const events = fs.readFileSync(firstTrailPath, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+      if (events.at(-1)?.kind === 'session.end') return
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    throw new Error('idle session did not end before the deadline')
+  })
+  const ended = fs.readFileSync(firstTrailPath, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+  assert.equal(ended.at(-1).data.reason, 'idle-timeout')
+  assert.equal(daemon.projection.status, 'ended')
+  assert.equal(daemon.sessionId, firstSessionId)
+
+  const ignoredHeartbeat = await fetch(`${daemon.url}/ingest`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ source: 'wp', kind: 'presence.heartbeat', data: { connectionId: 'idle-test', channel: 'wp-cli' } }),
+  }).then(response => response.json())
+  assert.equal(ignoredHeartbeat.accepted, false)
+  assert.equal(daemon.sessionId, firstSessionId)
+
+  const action = await fetch(`${daemon.url}/ingest`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ source: 'wp', kind: 'wp.option.updated', data: { name: 'blogdescription', objectType: 'option', channel: 'wp-cli' } }),
+  }).then(response => response.json())
+  assert.equal(action.accepted, true)
+  assert.notEqual(daemon.sessionId, firstSessionId)
+  assert.equal(action.sessionId, daemon.sessionId)
+  const next = fs.readFileSync(daemon.trailPath, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+  assert.deepEqual(next.map(event => event.kind), ['session.start', 'plan.snapshot', 'repo.snapshot', 'wp.option.updated'])
+  await daemon.close('test')
+})

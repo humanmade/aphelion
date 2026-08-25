@@ -37,8 +37,8 @@
 * { box-sizing: border-box; }
 ::selection { background: var(--declared-soft); color: var(--text); }
 * { scrollbar-width: thin; scrollbar-color: var(--border-strong) var(--bg); }
-html { min-width: 320px; min-height: 100%; overflow: hidden; background: var(--bg); }
-body { margin: 0; min-height: 100vh; overflow: hidden; background: var(--bg); color: var(--text); font: 14px/1.55 var(--font); }
+html { min-width: 320px; width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font: 14px/1.55 var(--font); }
 button, input, select { font: inherit; }
 button, select { color: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--declared); outline-offset: 2px; }
@@ -49,48 +49,48 @@ svg { display: block; }
 .skip-link { position: fixed; z-index: 100; top: 8px; left: 8px; transform: translateY(-160%); padding: 7px 11px; border-radius: 5px; background: var(--text); color: var(--bg); text-decoration: none; }
 .skip-link:focus { transform: translateY(0); }
 
-.app-shell { min-height: 100vh; display: grid; grid-template-rows: var(--chrome) minmax(0, 1fr); background: var(--bg); }
+.app-shell { width: 100%; height: 100dvh; min-height: 0; overflow: hidden; display: grid; grid-template-rows: var(--chrome) minmax(0, 1fr); background: var(--bg); }
 .chrome-bar { position: relative; z-index: 30; display: grid; grid-template-columns: auto minmax(148px, 224px) auto minmax(260px, 1fr) auto; align-items: center; gap: 10px; height: var(--chrome); padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--band); }
 .brand { display: flex; align-items: center; gap: 8px; min-width: 102px; color: var(--text-2); }
 .brand-mark { width: 24px; height: 24px; overflow: visible; }
 /* Accelerate triangle ⇄ orb: each dot holds the triangle, glides to its orb
    position, holds, and returns. Positions live per-dot in --t and --o. */
-.brand-mark .bm { transform: var(--t); animation: brand-morph 7s var(--ease, cubic-bezier(.25,.1,.25,1)) infinite; }
-.brand-mark .bd { fill: var(--brand); animation: brand-fill 7s var(--ease) infinite, drift-a 7s ease-in-out infinite; }
+.brand-mark .bm { transform: var(--t); animation: brand-morph 14s var(--ease, cubic-bezier(.25,.1,.25,1)) infinite; }
+.brand-mark .bd { fill: var(--brand); animation: brand-fill 14s var(--ease) infinite, drift-a 14s ease-in-out infinite; }
 .brand-mark .bm:nth-child(3n) .bd { animation-name: brand-fill, drift-b; }
 .brand-mark .bm:nth-child(3n+1) .bd { animation-name: brand-fill, drift-c; }
 @keyframes brand-morph {
-  0%, 32%  { transform: var(--t); opacity: 1; }
-  46%, 78% { transform: var(--o); opacity: var(--oo, 1); }
-  92%, 100% { transform: var(--t); opacity: 1; }
+  0%, 18%  { transform: var(--t); opacity: 1; }
+  46%, 74% { transform: var(--o); opacity: var(--oo, 1); }
+  100% { transform: var(--t); opacity: 1; }
 }
 @keyframes brand-fill {
-  0%, 32% { fill: var(--brand); }
-  46%, 78% { fill: oklch(97% 0 0); }
-  92%, 100% { fill: var(--brand); }
+  0%, 18% { fill: var(--brand); }
+  46%, 74% { fill: oklch(97% 0 0); }
+  100% { fill: var(--brand); }
 }
 /* organic wander, alive only during the sphere phase (46–78%); wander is inside
    the depth-scaled group, so far dots drift less — depth survives the motion */
 @keyframes drift-a {
-  0%, 40% { transform: translate(0, 0); }
-  50% { transform: translate(.55px, -.4px); }
-  60% { transform: translate(-.35px, -.65px); }
-  70% { transform: translate(.45px, .55px); }
-  84%, 100% { transform: translate(0, 0); }
+  0%, 44% { transform: translate(0, 0); }
+  52% { transform: translate(.55px, -.4px); }
+  61% { transform: translate(-.35px, -.65px); }
+  69% { transform: translate(.45px, .55px); }
+  78%, 100% { transform: translate(0, 0); }
 }
 @keyframes drift-b {
-  0%, 42% { transform: translate(0, 0); }
-  52% { transform: translate(-.6px, .3px); }
+  0%, 46% { transform: translate(0, 0); }
+  54% { transform: translate(-.6px, .3px); }
   63% { transform: translate(.4px, .6px); }
-  72% { transform: translate(-.5px, -.45px); }
-  86%, 100% { transform: translate(0, 0); }
+  71% { transform: translate(-.5px, -.45px); }
+  80%, 100% { transform: translate(0, 0); }
 }
 @keyframes drift-c {
-  0%, 44% { transform: translate(0, 0); }
-  54% { transform: translate(.35px, .6px); }
+  0%, 48% { transform: translate(0, 0); }
+  56% { transform: translate(.35px, .6px); }
   64% { transform: translate(-.6px, -.3px); }
-  74% { transform: translate(.5px, -.5px); }
-  88%, 100% { transform: translate(0, 0); }
+  72% { transform: translate(.5px, -.5px); }
+  82%, 100% { transform: translate(0, 0); }
 }
 @media (prefers-reduced-motion: reduce) { .brand-mark .bm, .brand-mark .bm .bd { animation: none !important; } }
 .brand-word { font-family: "Geist Pixel", var(--mono, ui-monospace, monospace); font-size: 15px; font-weight: 400; letter-spacing: .02em; color: var(--text); }
@@ -129,11 +129,14 @@ svg { display: block; }
 .map-surface { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--canvas); }
 .component-flow { width: 100%; height: 100%; min-height: 0; overflow: hidden; }
 .graph-shell { position: relative; width: 100%; height: 100%; overflow: hidden; }
-.work-graph { width: 100%; height: 100%; overflow: visible; touch-action: none; cursor: grab; }
+.work-graph { position: absolute; inset: 0; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: visible; touch-action: none; cursor: grab; }
 .work-graph:active { cursor: grabbing; }
 .graph-grid-dot { fill: oklch(28% 0 0 / .42); }
 .graph-grid-fill { fill: url(#graph-grid); }
 .graph-world { transform-box: fill-box; transform-origin: top left; }
+.graph-lane rect { fill: color-mix(in oklch, var(--surface) 20%, transparent); stroke: color-mix(in oklch, var(--border) 62%, transparent); stroke-width: 1; stroke-dasharray: 2 7; vector-effect: non-scaling-stroke; transition: width 500ms var(--ease-out), height 500ms var(--ease-out), fill 300ms var(--ease); }
+.graph-lane.empty rect { fill: color-mix(in oklch, var(--surface) 10%, transparent); }
+.graph-lane-label { fill: var(--text-3); font: 500 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
 
 .graph-edge { fill: none; stroke: var(--border-strong); stroke-width: 1.15; vector-effect: non-scaling-stroke; transition: stroke 360ms var(--ease), opacity 360ms var(--ease), filter 360ms var(--ease); }
 .graph-edge.link { stroke-dasharray: 4 5; }
@@ -145,13 +148,16 @@ svg { display: block; }
 @keyframes edge-travel { to { stroke-dashoffset: -18; } }
 .graph-arrow { fill: none; stroke: var(--border-strong); stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round; }
 .graph-edge-label { fill: var(--text-3); font: 500 12px/1 var(--mono); letter-spacing: .03em; }
+.graph-edge-label[hidden] { display: none; }
 .graph-edge-label.active { fill: var(--live); }
-.graph-flow-claim { fill: var(--declared); font: 500 12px/1 var(--mono); animation: claim-enter 300ms var(--ease-out) both; }
-@keyframes claim-enter { from { opacity: 0; transform: translateX(-8px); } }
 .energy-particle { fill: var(--live); filter: drop-shadow(0 0 7px var(--live)); }
 
 .graph-node { cursor: pointer; transition: opacity 400ms var(--ease); }
 .graph-node.future { opacity: 0; pointer-events: none; }
+.graph-node.provisional { opacity: .68; }
+.graph-node.provisional .place-card { border-color: color-mix(in oklch, var(--declared) 55%, var(--border)); border-style: dashed; background: color-mix(in oklch, var(--surface) 82%, transparent); box-shadow: 0 0 20px color-mix(in oklch, var(--declared) 10%, transparent); }
+.graph-node.unconfirmed { opacity: .72; }
+.graph-node.unconfirmed .place-card { border-color: var(--border-strong); border-style: dashed; box-shadow: none; }
 .graph-node.birth { animation: node-birth 500ms var(--ease-out) both; transform-box: fill-box; transform-origin: left top; }
 @keyframes node-birth { from { opacity: 0; transform: scale(.965); } }
 .place-card-foreign { overflow: visible; }

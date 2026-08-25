@@ -90,6 +90,8 @@ test('declared work is in flight before presence makes its reusable edge live', 
   assert.equal(beforePresence.edges[0].active, true)
   assert.equal(beforePresence.edges[0].connected, false)
   assert.equal(beforePresence.edges[0].flowState, 'claimed')
+  assert.equal(beforePresence.nodes[0].visibility, 'declared')
+  assert.equal(beforePresence.nodes[0].future, false)
   assert.equal(withPresence.edges[0].active, true)
   assert.equal(withPresence.edges[0].connected, true)
   assert.equal(withPresence.edges[0].flowState, 'live')
@@ -142,7 +144,8 @@ test('replay reserves final noun slots while reveal and state advance over stabl
 
   assert.equal(early.nodes[0].x, 52)
   assert.equal(early.nodes[0].y, 72)
-  assert.equal(early.nodes[1].future, true)
+  assert.equal(early.nodes[1].future, false)
+  assert.equal(early.nodes[1].visibility, 'declared')
   assert.equal(early.nodes[2].future, true)
   assert.deepEqual(
     early.nodes.map(node => [node.id, node.x, node.y]),
@@ -150,4 +153,88 @@ test('replay reserves final noun slots while reveal and state advance over stabl
   )
   assert.equal(early.width, final.width)
   assert.equal(early.height, final.height)
+  assert.equal(early.lanes.find(lane => lane.category === 'content').empty, false)
+  assert.equal(early.lanes.find(lane => lane.category === 'settings').empty, true)
+  assert.equal(early.lanes.find(lane => lane.category === 'settings').height, 24)
+  assert.equal(final.lanes.find(lane => lane.category === 'settings').empty, false)
+})
+
+test('an ended claim remains a visible unconfirmed version of the same place', () => {
+  const declared = event(1, 'agent.action.declared', { requestId: 'setting', objectType: 'option', option: 'blogdescription', channel: 'wp-cli', summary: 'Edit the tagline' })
+  const unrelatedClose = event(2, 'presence.close', { requestId: 'another-request', channel: 'wp-cli' })
+  const awaiting = buildSiteTopology([declared, unrelatedClose])
+  const ended = event(3, 'session.end', {}, 'session')
+  const topology = buildSiteTopology([declared, ended])
+
+  assert.equal(awaiting.nodes[0].changes[0].status, 'in-flight')
+  assert.equal(topology.nodes.length, 1)
+  assert.equal(topology.nodes[0].id, 'wp:option:blogdescription')
+  assert.equal(topology.nodes[0].visibility, 'unconfirmed')
+  assert.equal(topology.nodes[0].future, false)
+  assert.equal(topology.nodes[0].changes[0].status, 'unconfirmed')
+})
+
+test('a typed create claim is born in its final lane and gains identity on confirmation', () => {
+  const events = [
+    event(1, 'agent.action.declared', { requestId: 'create', objectType: 'post', channel: 'wp-cli', summary: 'Create a post' }),
+    event(2, 'wp.post.created', { requestId: 'create', objectType: 'post', objectId: 468, title: 'QA post', status: 'draft', channel: 'wp-cli' }),
+  ]
+  const declared = buildSiteTopology(events.slice(0, 1), { blueprintEvents: events })
+  const confirmed = buildSiteTopology(events, { blueprintEvents: events })
+  const declaredLayout = layoutSiteTopology(declared)
+  const confirmedLayout = layoutSiteTopology(confirmed)
+
+  assert.deepEqual({ id: declared.nodes[0].id, type: declared.nodes[0].type, category: declared.nodes[0].category, title: declared.nodes[0].title, identity: declared.nodes[0].identity }, {
+    id: 'wp:post:468', type: 'post', category: 'content', title: 'New post', identity: '',
+  })
+  assert.equal(confirmed.nodes[0].title, 'QA post')
+  assert.equal(confirmed.nodes[0].identity, '468')
+  assert.deepEqual(
+    declaredLayout.nodes.map(node => [node.id, node.x, node.y]),
+    confirmedLayout.nodes.map(node => [node.id, node.x, node.y]),
+  )
+})
+
+test('deleted content and site identity remain owner-readable at the playhead', () => {
+  const topology = buildSiteTopology([
+    event(1, 'session.start', { target: 'http://localhost:8081' }, 'session'),
+    event(2, 'runtime.site.identity', { siteName: 'Accelerate Demo' }, 'sidecar'),
+    event(3, 'wp.post.deleted', { objectType: 'post', objectId: 468, title: 'QA post', blockCount: 1, channel: 'wp-cli' }),
+    event(4, 'wp.post.deleted', { objectType: 'post', objectId: 469, title: 'QA post', channel: 'wp-cli' }),
+  ])
+
+  assert.equal(topology.root.title, 'Accelerate Demo')
+  assert.deepEqual(topology.nodes.map(node => node.stateLine), ['Deleted · 1 block', 'Deleted'])
+  assert.equal(topology.nodes.some(node => node.stateLine === 'Content'), false)
+})
+
+test('renamable places use the latest observed name at each playhead', () => {
+  const events = [
+    event(1, 'wp.post.updated', { objectType: 'post', objectId: 339, postType: 'page', title: 'Home', status: 'publish', changedProperties: ['title'], channel: 'wp-cli' }),
+    event(2, 'wp.post.updated', { objectType: 'post', objectId: 339, postType: 'page', title: 'Home — Aphelion live run', status: 'publish', changedProperties: ['title'], channel: 'wp-cli' }),
+    event(3, 'wp.post.updated', { objectType: 'post', objectId: 339, postType: 'page', title: 'Home', status: 'publish', changedProperties: ['title'], channel: 'wp-cli' }),
+  ]
+
+  assert.equal(buildSiteTopology(events.slice(0, 1)).nodes[0].title, 'Home')
+  assert.equal(buildSiteTopology(events.slice(0, 2)).nodes[0].title, 'Home — Aphelion live run')
+  const restored = buildSiteTopology(events)
+  assert.equal(restored.nodes[0].title, 'Home')
+  assert.deepEqual(restored.nodes[0].changes.map(change => change.state.title), ['Home', 'Home — Aphelion live run', 'Home'])
+})
+
+test('desktop site layout uses append-stable category lanes', () => {
+  const events = []
+  for (let index = 0; index < 20; index++) {
+    events.push(event(index + 1, 'wp.post.updated', { objectType: 'post', objectId: index + 1, postType: 'page', title: `Page ${index + 1}`, channel: 'wp-cli' }))
+  }
+  const layoutSeed = { desktopWrapColumns: 4 }
+  const first = layoutSiteTopology(buildSiteTopology(events.slice(0, 18)), { layoutSeed })
+  const final = layoutSiteTopology(buildSiteTopology(events), { layoutSeed })
+  const finalPositions = new Map(final.nodes.map(node => [node.id, `${node.x}:${node.y}`]))
+  const content = final.nodes.slice(1)
+
+  assert.equal(final.lanes.length, 1)
+  assert.equal(new Set(content.map(node => node.x)).size, 4)
+  assert.equal(new Set(content.map(node => node.y)).size, 5)
+  for (const node of first.nodes) assert.equal(`${node.x}:${node.y}`, finalPositions.get(node.id))
 })

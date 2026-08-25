@@ -25,3 +25,4 @@ Maintainers with access to the private companion repo check it out at `internal/
 - **Zero-dependency discipline.** The daemon has no production npm dependencies and the board ships as prebuilt static assets with no runtime framework. Adding a production dependency is a deliberate, recorded decision, not a default.
 - **Attribution travels.** Files substantially derived from upstream keep a one-line provenance comment; the root `LICENSE` carries the umbrella notice.
 - **Owner-readable naming.** UI strings and card names are written for someone who cannot read code — engineer phrasing goes in secondary detail (the inspector), never in headlines. `docs/topology-language.md` is the binding text contract.
+- **Observers alone write trails.** Never append an event by hand; obtain missing context through a new observation from an Aphelion observer.

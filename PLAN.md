@@ -17,6 +17,8 @@ files: [src/daemon/**]
   from: roadmap
 - [x] Derive the map from WordPress declarations (block.json, register_*) {#observe-repo-wpmap}
   from: roadmap
+- [x] End idle sessions and rotate the next real action into a fresh trail {#observe-repo-session-rollover}
+  from: post-0.1 QA
 
 ## See the site {#observe-site}
 tech: sidecar (WP-CLI poll + debug.log tail), audit mu-plugin, MCP tap — docs/observation-surfaces.md
@@ -36,6 +38,12 @@ needs: [observe-repo]
 files: [src/board/**]
 - [x] Serve the live board from trail projections {#board-live}
   from: roadmap
+- [x] Patch durable place and flow elements without rebuilding the canvas {#board-keyed-render}
+  from: post-0.1 QA
+- [x] Reveal declared places, preserve the camera, and group places into stable lanes {#board-live-language}
+  from: post-0.1 QA
+- [x] Refresh observed place names and wrap desktop lanes with a stable layout seed {#board-place-refresh-wrap}
+  from: post-0.1 QA
 
 ## Replay any session {#replay}
 tech: scrub UI over trail; sparse snapshot index for seeking
@@ -43,6 +51,8 @@ needs: [trail, board]
 files: [src/replay/**]
 - [x] Scrub through a past session on the board {#replay-scrub}
   from: roadmap
+- [x] Make replay position explicit and auto-play timelapse over visual events {#replay-liveness}
+  from: post-0.1 QA
 
 ## Render the timelapse {#timelapse}
 tech: render trail projection to video, re-renderable after the fact

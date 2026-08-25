@@ -43,6 +43,36 @@ function entityLabel(type, identity, data) {
   return `${titleCase(type)} #${identity}`
 }
 
+function provisionalEntity(key, event) {
+  const data = event?.data || {}
+  const rawType = text(data.objectType || data.type).toLowerCase().replaceAll('_', '-')
+  if (!rawType) return null
+  const type = rawType === 'post-meta' || rawType === 'postmeta'
+    ? data.postType === 'page' ? 'page' : 'post'
+    : rawType === 'post' && data.postType === 'page' ? 'page' : rawType
+  const category = ['page', 'post'].includes(type)
+    ? 'content'
+    : type === 'option'
+      ? 'settings'
+      : type === 'ability'
+        ? 'abilities'
+        : type === 'plugin'
+          ? 'plugins'
+          : type === 'route'
+            ? 'interfaces'
+            : 'objects'
+  const noun = type === 'option' ? 'setting' : type
+  return {
+    key,
+    identity: '',
+    type,
+    category,
+    title: `New ${noun}`,
+    plugin: data.plugin || null,
+    provisionalIdentity: true,
+  }
+}
+
 export function resolveTopologyEntity(event) {
   const data = event?.data || {}
   const rawType = text(data.objectType || data.type).toLowerCase().replaceAll('_', '-')
@@ -194,6 +224,7 @@ function claimedVerb(event) {
 function stateData(event) {
   const data = event.data || {}
   return {
+    title: text(data.title || data.displayName || data.objectName) || null,
     status: data.status || null,
     blockCount: Number.isFinite(data.blockCount) ? data.blockCount : null,
     restored: data.restored === true,
@@ -203,7 +234,7 @@ function stateData(event) {
   }
 }
 
-function changeRecords(history, relatedEdges) {
+function changeRecords(history, sessionEnded = false) {
   const claims = new Map()
   const openClaims = new Map()
   const changes = []
@@ -285,8 +316,7 @@ function changeRecords(history, relatedEdges) {
 
   for (const change of changes) {
     if (change.confirmation) continue
-    const edge = relatedEdges.find(candidate => !candidate.future && candidate.requests.includes(change.requestId))
-    change.status = edge?.active ? 'in-flight' : 'unconfirmed'
+    change.status = sessionEnded ? 'unconfirmed' : 'in-flight'
   }
   return changes
 }
@@ -299,10 +329,21 @@ function placeState(entity, changes) {
   const blockCount = [...relevant].reverse().find(state => state.blockCount !== null)?.blockCount
 
   if (['page', 'post', 'content'].includes(entity.type)) {
-    const status = latestStatus || (latest?.confirmation?.kind.endsWith('.trashed') ? 'trash' : null)
-    const parts = [status ? titleCase(status) : entity.type === 'page' ? 'Page' : 'Content']
+    const latestKind = latest?.confirmation?.kind || ''
+    const state = latestKind.endsWith('.deleted')
+      ? 'Deleted'
+      : latestKind.endsWith('.trashed')
+        ? 'Trash'
+        : latestStatus
+          ? titleCase(latestStatus)
+          : latestKind.endsWith('.created')
+            ? 'Created'
+            : latestKind.endsWith('.updated')
+              ? 'Updated'
+              : null
+    const parts = state ? [state] : []
     if (blockCount !== undefined && blockCount !== null) parts.push(`${blockCount} ${blockCount === 1 ? 'block' : 'blocks'}`)
-    return parts.join(' · ')
+    return parts.join(' · ') || null
   }
   if (entity.type === 'option') {
     const state = latest?.state || {}
@@ -317,14 +358,16 @@ function mergeEntity(previous, incoming) {
   if (!previous) return { ...incoming }
   const canRefineType = ['object', 'content'].includes(previous.type) && !['object', 'content'].includes(incoming.type)
   const nextType = canRefineType ? incoming.type : previous.type
-  const genericTitle = entity => entity.title === entity.identity || /^(?:Content|Page|Post) #\d+$/.test(entity.title)
+  const genericTitle = entity => entity.title === entity.identity || /^(?:Content|Page|Post) #\d+$/.test(entity.title) || /^New\s/i.test(entity.title)
   const canRefineTitle = genericTitle(previous) && (canRefineType || !genericTitle(incoming))
   return {
     ...previous,
+    identity: previous.identity || incoming.identity,
     type: nextType,
     category: incoming.category || previous.category,
     title: canRefineTitle && incoming.title ? incoming.title : previous.title,
     plugin: incoming.plugin || previous.plugin || null,
+    provisionalIdentity: previous.provisionalIdentity && !incoming.identity,
   }
 }
 
@@ -381,7 +424,7 @@ function analyze(events, requestTargets) {
   const ensureEntity = (key, event) => {
     const direct = resolveTopologyEntity(event)
     const previous = entities.get(key)
-    const fallback = direct || { key, identity: key.split(':').at(-1), type: 'object', category: 'objects', title: titleCase(key.split(':').at(-1)), plugin: null }
+    const fallback = direct || provisionalEntity(key, event) || { key, identity: key.split(':').at(-1), type: 'object', category: 'objects', title: titleCase(key.split(':').at(-1)), plugin: null }
     if (!previous) {
       entityOrder.push(key)
       entities.set(key, {
@@ -448,8 +491,15 @@ function analyze(events, requestTargets) {
         const entity = ensureEntity(key, event)
         entity.lastSeq = event.seq
         entity.lastAt = event.ts
-        entity.title = mergeEntity(entity, resolveTopologyEntity(event) || entity).title
-        entity.type = mergeEntity(entity, resolveTopologyEntity(event) || entity).type
+        const resolved = resolveTopologyEntity(event)
+        const merged = mergeEntity(entity, resolved || provisionalEntity(key, event) || entity)
+        entity.identity = merged.identity
+        entity.title = merged.title
+        const observedTitle = classification === 'observed' ? text(event.data?.title || event.data?.displayName || event.data?.objectName) : ''
+        if (observedTitle) entity.title = observedTitle
+        entity.type = merged.type
+        entity.category = merged.category
+        entity.provisionalIdentity = merged.provisionalIdentity
         entity.summary = eventSummary(event)
         entity.history.push({
           seq: event.seq,
@@ -533,11 +583,11 @@ function analyze(events, requestTargets) {
   return { entities, entityOrder, edges, currentTargets, currentEdgeKey }
 }
 
-function serializeEntity(entity, order, visible, edges, seen = true) {
+function serializeEntity(entity, order, visibility, edges, seen = true, sessionEnded = false) {
   const relatedEdges = edges.filter(edge => edge.to === entity.key)
-  const changes = seen ? changeRecords(entity.history, relatedEdges) : []
+  const changes = seen ? changeRecords(entity.history, sessionEnded) : []
   const latestChange = changes.at(-1) || null
-  if (!visible) return {
+  if (visibility === 'blueprint-future') return {
     id: entity.key,
     key: entity.key,
     identity: entity.identity,
@@ -545,6 +595,7 @@ function serializeEntity(entity, order, visible, edges, seen = true) {
     category: entity.category,
     title: entity.title,
     order,
+    visibility,
     future: true,
     history: seen ? entity.history : [],
     changes,
@@ -570,6 +621,7 @@ function serializeEntity(entity, order, visible, edges, seen = true) {
     title: entity.title,
     summary: entity.summary,
     order,
+    visibility,
     future: false,
     firstSeq: entity.firstSeq,
     lastSeq: entity.lastSeq,
@@ -617,16 +669,24 @@ export function buildSiteTopology(events, options = {}) {
       future: true,
     }
   })
+  const sessionEnded = visibleEvents.some(event => event?.kind === 'session.end')
   const nodes = blueprint.entityOrder.map((key, order) => {
     const blueprintEntity = blueprint.entities.get(key)
     const visibleEntity = visible.entities.get(key)
-    return serializeEntity(visibleEntity || blueprintEntity, order, Boolean(visibleEntity?.observedCount), edges, Boolean(visibleEntity))
+    const visibility = visibleEntity?.observedCount
+      ? 'confirmed'
+      : visibleEntity?.declaredCount
+        ? sessionEnded ? 'unconfirmed' : 'declared'
+        : 'blueprint-future'
+    return serializeEntity(visibleEntity || blueprintEntity, order, visibility, edges, Boolean(visibleEntity), sessionEnded)
   })
   const visibleNodes = nodes.filter(node => !node.future)
   const session = visibleEvents.find(event => event.kind === 'session.start')?.data || {}
   const target = options.target || session.target || 'Local WordPress site'
   const address = target.includes('://') ? new URL(target).host : target
-  const siteName = options.siteName || session.siteName || session.targetName || session.siteTitle || session.blogname || address
+  const identityEvent = [...visibleEvents].reverse().find(event => event.kind === 'runtime.site.identity' && text(event.data?.siteName))
+    || [...blueprintEvents].reverse().find(event => event.kind === 'runtime.site.identity' && text(event.data?.siteName))
+  const siteName = options.siteName || session.siteName || session.targetName || session.siteTitle || session.blogname || identityEvent?.data?.siteName || address
   const activeEdges = edges.filter(edge => !edge.future && edge.active)
   const visibleFlows = edges.filter(edge => !edge.future)
   const latestFlow = visibleFlows.toSorted((a, b) => (b.lastAt || 0) - (a.lastAt || 0))[0] || null
@@ -675,26 +735,69 @@ export function layoutSiteTopology(topology, options = {}) {
   const nodeH = options.nodeH ?? 164
   const gapX = options.gapX ?? (compact ? 38 : 112)
   const gapY = options.gapY ?? (compact ? 28 : 40)
-  const rowsPerColumn = compact ? Number.POSITIVE_INFINITY : Math.max(1, options.rowsPerColumn || 6)
+  const categoryOrder = options.categoryOrder || ['content', 'settings', 'abilities', 'interfaces', 'objects', 'plugins']
+  const categoryRank = new Map(categoryOrder.map((category, index) => [category, index]))
+  // A session-stable logical seed, not viewport width, owns wrapping. Four
+  // 320px cards produce a balanced 4x5 block for the 20-place desktop case.
+  const desktopWrapColumns = Math.max(1, Number(options.layoutSeed?.desktopWrapColumns || 4))
+  const nodeHeights = options.nodeHeights || {}
   const placed = []
+  const lanes = []
   const root = { ...topology.root, x: padX, y: padY, depth: 0 }
   placed.push(root)
 
-  topology.nodes.forEach((node, index) => {
-    const column = compact ? 0 : Math.floor(index / rowsPerColumn)
-    const row = compact ? index : index % rowsPerColumn
-    placed.push({
-      ...node,
-      x: compact ? padX : padX + nodeW + gapX + column * (nodeW + gapX),
-      y: compact ? padY + nodeH + gapY + row * (nodeH + gapY) : padY + row * (nodeH + gapY),
-      depth: column + 1,
-    })
+  const groups = new Map()
+  for (const node of topology.nodes) (groups.get(node.category) || groups.set(node.category, []).get(node.category)).push(node)
+  const orderedCategories = [...groups.keys()].toSorted((left, right) => {
+    const leftRank = categoryRank.get(left) ?? categoryOrder.length
+    const rightRank = categoryRank.get(right) ?? categoryOrder.length
+    return leftRank - rightRank || left.localeCompare(right)
   })
+  let compactIndex = 0
+  let nextLaneY = padY
+  let visibleBottom = padY + (nodeHeights[root.id] || nodeH)
+  for (const category of orderedCategories) {
+    const rank = categoryRank.get(category) ?? categoryOrder.length + orderedCategories.filter(item => !categoryRank.has(item)).indexOf(category)
+    const entries = groups.get(category)
+    const empty = entries.every(node => node.future)
+    if (compact) {
+      entries.forEach(node => placed.push({ ...node, x: padX, y: padY + nodeH + gapY + compactIndex++ * (nodeH + gapY), depth: rank + 1 }))
+      continue
+    }
+    const y = nextLaneY
+    entries.forEach((node, index) => placed.push({
+      ...node,
+      x: padX + nodeW + gapX + (index % desktopWrapColumns) * (nodeW + gapX),
+      y: y + Math.floor(index / desktopWrapColumns) * (nodeH + gapY),
+      depth: rank + 1,
+    }))
+    const reservedRows = Math.max(1, Math.ceil(entries.length / desktopWrapColumns))
+    const visibleEntries = entries.filter(node => !node.future)
+    const visibleColumns = Math.max(1, Math.min(desktopWrapColumns, visibleEntries.length))
+    const laneHeight = empty ? 0 : Math.max(...visibleEntries.map(node => {
+      const index = entries.indexOf(node)
+      const rowY = Math.floor(index / desktopWrapColumns) * (nodeH + gapY)
+      return rowY + (nodeHeights[node.id] || nodeH)
+    }))
+    const visualY = empty ? visibleBottom + gapY : y
+    lanes.push({
+      id: `lane:${category}`,
+      category,
+      empty,
+      x: padX + nodeW + gapX - 24,
+      y: visualY - 24,
+      width: empty ? 148 : Math.max(nodeW + 48, visibleColumns * (nodeW + gapX) - gapX + 48),
+      height: empty ? 24 : laneHeight + 48,
+    })
+    if (!empty) visibleBottom = Math.max(visibleBottom, y + laneHeight)
+    nextLaneY = y + reservedRows * nodeH + Math.max(0, reservedRows - 1) * gapY + gapY * 2
+  }
 
   const maxX = Math.max(...placed.map(node => node.x + nodeW), padX + nodeW)
   const maxY = Math.max(...placed.map(node => node.y + nodeH), padY + nodeH)
   return {
     nodes: placed,
+    lanes,
     edges: topology.edges,
     width: maxX + padX,
     height: maxY + padY,

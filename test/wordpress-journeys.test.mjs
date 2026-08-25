@@ -199,6 +199,7 @@ test('WP-CLI sidecar retries after disconnect and fingerprints settings instead 
   assert.ok(events.some(event => event.kind === 'presence.ready' && event.data.channel === 'wp-cli'))
   assert.equal(events.filter(event => event.source === 'sidecar' && event.kind === 'presence.heartbeat').length, 0)
   assert.ok(events.some(event => event.kind === 'runtime.baseline' && event.data.optionNames.includes('blogname')))
+  assert.ok(events.some(event => event.kind === 'runtime.site.identity' && event.data.siteName === 'aphelion-test-v1'))
   assert.equal(changed.data.changed, true)
   assert.match(changed.data.beforeFingerprint, /^[a-f0-9]{16}$/)
   assert.match(changed.data.afterFingerprint, /^[a-f0-9]{16}$/)

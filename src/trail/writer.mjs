@@ -65,10 +65,11 @@ export class TrailWriter {
 
   close(data = {}) {
     if (this.closed) return
-    this.append('session', 'session.end', data)
+    const event = this.append('session', 'session.end', data)
     fs.closeSync(this.#fd)
     this.#fd = null
     this.closed = true
+    return event
   }
 }
 

@@ -15,6 +15,7 @@ import { startSidecar } from '../sidecar/index.mjs'
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const PUBLIC_ROOT = path.join(PACKAGE_ROOT, 'public')
 const MAX_BODY = 1_000_000
+const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json; charset=utf-8' }
 
 function json(response, status, value) {
@@ -78,20 +79,76 @@ export async function startDaemon(options = {}) {
   const targetType = options.targetType || 'project'
   const target = targetType === 'site' ? String(options.target) : path.resolve(options.target || process.cwd())
   const planPath = targetType === 'project' ? path.join(target, 'PLAN.md') : null
-  const writer = createTrailWriter({ target, targetType, integrity: options.integrity, agent: options.agent, version: options.version || '0.1.0', trailDirectory: options.trailDirectory })
+  const writerOptions = { target, targetType, integrity: options.integrity, agent: options.agent, version: options.version || '0.1.0', trailDirectory: options.trailDirectory }
+  let writer = createTrailWriter(writerOptions)
   let projection = projectEvents(await readTrail(writer.path))
   let plan = parsePlan(planPath && fs.existsSync(planPath) ? fs.readFileSync(planPath, 'utf8') : '')
   let repository = { target, files: [], declarations: [], truncated: false }
   const clients = new Set()
   let stopped = false
   let rescanTimer = null
+  let idleTimer = null
+  let sessionClosed = false
+  let lastActivityAt = Date.now()
+  const idleTimeoutMs = options.idleTimeoutMs === undefined ? DEFAULT_IDLE_TIMEOUT_MS : Number(options.idleTimeoutMs)
 
-  const emit = (source, kind, data, emitOptions) => {
-    const event = writer.append(source, kind, data, emitOptions)
-    projection = reduceEvent(projection, event)
+  if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0) throw new TypeError('idleTimeoutMs must be a positive number')
+
+  const broadcast = event => {
     const message = `event: trail\ndata: ${JSON.stringify(event)}\n\n`
     for (const client of clients) client.write(message)
     options.onEvent?.(event, projection)
+  }
+
+  const append = (source, kind, data, emitOptions) => {
+    const event = writer.append(source, kind, data, emitOptions)
+    projection = reduceEvent(projection, event)
+    broadcast(event)
+    return event
+  }
+
+  const isActivity = kind => !kind.startsWith('presence.') && !kind.startsWith('session.') && kind !== 'plan.snapshot' && kind !== 'repo.snapshot'
+
+  const armIdleTimer = () => {
+    clearTimeout(idleTimer)
+    if (stopped || sessionClosed) return
+    const remaining = Math.max(1, lastActivityAt + idleTimeoutMs - Date.now())
+    idleTimer = setTimeout(() => {
+      if (stopped || sessionClosed) return
+      if (Date.now() - lastActivityAt < idleTimeoutMs) return armIdleTimer()
+      const event = writer.close({ reason: 'idle-timeout', idleTimeoutMs })
+      sessionClosed = true
+      projection = reduceEvent(projection, event)
+      broadcast(event)
+    }, remaining)
+    idleTimer.unref?.()
+  }
+
+  const beginSession = () => {
+    writer = createTrailWriter(writerOptions)
+    projection = projectEvents([])
+    sessionClosed = false
+    lastActivityAt = Date.now()
+    const [start] = fs.readFileSync(writer.path, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    projection = reduceEvent(projection, start)
+    broadcast(start)
+    append('plan', 'plan.snapshot', plan)
+    append('watcher', 'repo.snapshot', repository)
+    armIdleTimer()
+  }
+
+  const emit = (source, kind, data, emitOptions) => {
+    if (stopped) return null
+    const activity = isActivity(kind)
+    if (sessionClosed) {
+      if (!activity) return null
+      beginSession()
+    }
+    const event = append(source, kind, data, emitOptions)
+    if (activity) {
+      lastActivityAt = Date.now()
+      armIdleTimer()
+    }
     return event
   }
 
@@ -109,6 +166,7 @@ export async function startDaemon(options = {}) {
 
   snapshotPlan()
   snapshotRepository()
+  armIdleTimer()
 
   const stopWatching = options.watch === false || targetType !== 'project' ? () => {} : watchRepository(target, (file, at) => {
     emit('watcher', 'file.write', { file, components: matchComponents(plan, file) }, { ts: at })
@@ -127,7 +185,7 @@ export async function startDaemon(options = {}) {
       const url = new URL(request.url, 'http://127.0.0.1')
       if (!isLocalRequest(request)) return json(response, 403, { error: 'Aphelion accepts loopback requests only.' })
       if (request.method === 'GET' && url.pathname === '/health') {
-        return json(response, 200, { ok: true, sessionId: writer.sessionId, target, targetType, port: server.address()?.port || null })
+        return json(response, 200, { ok: true, sessionId: writer.sessionId, target, targetType, idleTimeoutMs, port: server.address()?.port || null })
       }
       if (request.method === 'GET' && url.pathname === '/api/model') {
         return json(response, 200, { ...projection, daemon: { target, targetType, sessionId: writer.sessionId } })
@@ -159,7 +217,7 @@ export async function startDaemon(options = {}) {
         const input = await body(request)
         if (!input.source || !input.kind || !input.data || typeof input.data !== 'object') return json(response, 400, { error: 'source, kind, and object data are required' })
         const event = emit(input.source, input.kind, input.data, { ts: input.ts })
-        return json(response, 202, { accepted: true, seq: event.seq })
+        return json(response, 202, event ? { accepted: true, seq: event.seq, sessionId: writer.sessionId } : { accepted: false, reason: 'session-idle' })
       }
       if (request.method === 'GET') {
         const asset = safeAsset(url.pathname)
@@ -185,21 +243,23 @@ export async function startDaemon(options = {}) {
     targetType,
     port,
     url: `http://127.0.0.1:${port}`,
-    sessionId: writer.sessionId,
-    trailPath: writer.path,
+    get sessionId() { return writer.sessionId },
+    get trailPath() { return writer.path },
+    idleTimeoutMs,
     get projection() { return projection },
     emit,
     async close(reason = 'shutdown') {
       if (stopped) return
       stopped = true
       clearTimeout(rescanTimer)
+      clearTimeout(idleTimer)
       clearInterval(keepAlive)
       stopWatching()
       stopSidecar()
       for (const client of clients) client.end()
       clients.clear()
       await new Promise(resolve => server.close(resolve))
-      writer.close({ reason })
+      if (!sessionClosed) writer.close({ reason })
       projection = projectEvents(await readTrail(writer.path))
     },
   }

@@ -19,7 +19,15 @@ const state = {
   timer: null,
   source: null,
   expandedTails: new Set(),
+  layoutSeeds: new Map(),
   nodePositions: new Map(),
+  camera: null,
+  cameraBounds: null,
+  cameraContext: null,
+  userMovedCamera: false,
+  graph: null,
+  renderFrame: null,
+  pendingRenderModel: null,
   inspectorSelection: null,
   inspectorTab: 'place',
   urlReady: false,
@@ -106,7 +114,7 @@ function syncDeepLink() {
 }
 
 function setText(id, value) {
-  $(id).textContent = value
+  if ($(id).textContent !== value) $(id).textContent = value
 }
 
 function toast(message) {
@@ -121,7 +129,8 @@ function renderHeader(model) {
   const signal = $('live-signal')
   const live = state.mode === 'live' && model.status === 'live'
   signal.dataset.status = live ? 'live' : state.mode === 'live' ? 'offline' : 'replay'
-  signal.querySelector('span').textContent = live ? 'Live' : state.mode === 'live' ? 'Recorded' : state.mode === 'replay' ? 'Replay' : 'Timelapse'
+  const label = live ? 'Live' : state.mode === 'live' ? 'Recorded' : state.mode === 'replay' ? 'Replay' : 'Timelapse'
+  if (signal.querySelector('span').textContent !== label) signal.querySelector('span').textContent = label
 }
 
 function renderSessions(model) {
@@ -135,14 +144,21 @@ function renderSessions(model) {
     return option
   })
   if (!options.length) {
-    const option = node('option', '', 'Waiting for first session')
-    option.value = ''
-    select.replaceChildren(option)
+    if (select.dataset.signature !== 'empty') {
+      const option = node('option', '', 'Waiting for first session')
+      option.value = ''
+      select.replaceChildren(option)
+      select.dataset.signature = 'empty'
+    }
     select.disabled = true
     return
   }
   select.disabled = false
-  select.replaceChildren(...options)
+  const signature = options.map(option => `${option.value}:${option.textContent}`).join('|')
+  if (select.dataset.signature !== signature) {
+    select.replaceChildren(...options)
+    select.dataset.signature = signature
+  }
   select.value = state.sessionId || model.daemon?.sessionId || options[0].value
 }
 
@@ -167,7 +183,8 @@ function renderOrbit(model, topology) {
   $('playback').dataset.playing = String(state.playing)
   $('playback').setAttribute('aria-label', state.playing ? 'Pause trail' : state.mode === 'timelapse' ? 'Play timelapse' : 'Play trail')
   const current = events[cursor]
-  setText('event-position', `${events.length ? cursor + 1 : 0} / ${events.length}`)
+  const position = `${events.length ? cursor + 1 : 0} / ${events.length}`
+  setText('event-position', state.mode === 'live' ? position : `${state.playing ? 'Playing' : 'Paused'} · moment ${position}`)
   setText('playback-caption', current ? `${formatClock(current.ts)} · ${playbackCaption(model, topology, current)}` : playbackCaption(model, topology, current))
 }
 
@@ -312,7 +329,7 @@ function changeRowElement(row) {
   const element = node('div', `change-row ${row.status === 'confirmed' ? '' : row.status}`.trim())
   const copy = node('span', 'change-copy')
   copy.append(node('strong', '', row.lead))
-  if (row.rest) copy.append(document.createTextNode(` ${row.rest}`))
+  if (row.rest) copy.append(node('span', 'change-rest', ` ${row.rest}`))
   const meta = node('span', 'change-meta')
   if (row.status !== 'confirmed') meta.append(node('span', `change-flag ${row.status}`, row.status))
   if (row.time) meta.append(node('time', '', row.time))
@@ -324,39 +341,291 @@ function placeCard(item, height, model) {
   const type = placeType(item)
   const card = node('div', 'place-card')
   const band = node('div', 'place-band')
-  band.append(placeIcon(type), node('span', 'place-type', type), node('span', 'place-address', item.address || item.identity || item.id), node('i', 'place-dot'))
-  const stateLine = cardStateLine(item)
-  const identity = node('div', `place-identity${stateLine ? '' : ' without-state'}`)
-  identity.append(node('strong', 'place-name', item.title))
-  if (stateLine) identity.append(node('div', 'place-state', stateLine))
+  const icon = placeIcon(type)
+  const typeLabel = node('span', 'place-type', type)
+  const address = node('span', 'place-address', item.address || item.identity || item.id)
+  const dot = node('i', 'place-dot')
+  band.append(icon, typeLabel, address, dot)
+  const identity = node('div', 'place-identity')
+  const name = node('strong', 'place-name', item.title)
+  const stateLine = node('div', 'place-state')
+  identity.append(name, stateLine)
   const tail = node('div', 'change-tail')
+  card.append(band, identity, tail)
+  card.__aphelion = { type, icon, typeLabel, address, dot, identity, name, stateLine, tail, rows: new Map(), more: null }
+  patchPlaceCard(card, item, height, model)
+  return card
+}
+
+function changeRowKey(row, index) {
+  const ids = (row.changes || []).map(change => change.id).filter(Boolean)
+  return ids.length ? ids.join('|') : `${row.lead}:${row.rest}:${row.time}:${index}`
+}
+
+function patchChangeRow(element, row) {
+  element.className = `change-row ${row.status === 'confirmed' ? '' : row.status}`.trim()
+  const copy = element.querySelector('.change-copy')
+  const strong = copy.querySelector('strong')
+  if (strong.textContent !== row.lead) strong.textContent = row.lead
+  let rest = copy.querySelector('.change-rest')
+  if (row.rest) {
+    if (!rest) { rest = node('span', 'change-rest'); copy.append(rest) }
+    if (rest.textContent !== ` ${row.rest}`) rest.textContent = ` ${row.rest}`
+  } else rest?.remove()
+  const meta = element.querySelector('.change-meta')
+  let flag = meta.querySelector('.change-flag')
+  if (row.status !== 'confirmed') {
+    if (!flag) { flag = node('span', `change-flag ${row.status}`); meta.prepend(flag) }
+    flag.className = `change-flag ${row.status}`
+    if (flag.textContent !== row.status) flag.textContent = row.status
+  } else flag?.remove()
+  let time = meta.querySelector('time')
+  if (row.time) {
+    if (!time) { time = node('time'); meta.append(time) }
+    if (time.textContent !== row.time) time.textContent = row.time
+  } else time?.remove()
+}
+
+function patchPlaceCard(card, item, height, model) {
+  const refs = card.__aphelion
+  const type = placeType(item)
+  if (refs.type !== type) {
+    const nextIcon = placeIcon(type)
+    refs.icon.replaceWith(nextIcon)
+    refs.icon = nextIcon
+    refs.type = type
+  }
+  if (refs.typeLabel.textContent !== type) refs.typeLabel.textContent = type
+  const address = item.address ?? item.identity ?? item.id
+  if (refs.address.textContent !== address) refs.address.textContent = address
+  if (refs.name.textContent !== item.title) refs.name.textContent = item.title
+
+  const stateLine = cardStateLine(item)
+  refs.identity.className = `place-identity${stateLine ? '' : ' without-state'}`
+  refs.stateLine.hidden = !stateLine
+  if (stateLine && refs.stateLine.textContent !== stateLine) refs.stateLine.textContent = stateLine
+
   const rows = cardRows(item)
   const expanded = state.expandedTails.has(item.id)
-  tail.dataset.expanded = String(expanded)
-  const visible = expanded ? rows : rows.slice(0, 3)
-  for (const row of visible) tail.append(changeRowElement(row))
+  if (rows.length && !refs.tail.isConnected) card.append(refs.tail)
+  if (!rows.length && refs.tail.isConnected) refs.tail.remove()
+  refs.tail.dataset.expanded = String(expanded)
+  const visibleRows = expanded ? rows : rows.slice(0, 3)
+  const wanted = new Set()
+  visibleRows.forEach((row, index) => {
+    const key = changeRowKey(row, index)
+    wanted.add(key)
+    let element = refs.rows.get(key)
+    if (!element) {
+      element = changeRowElement(row)
+      element.dataset.changeKey = key
+      refs.rows.set(key, element)
+    } else patchChangeRow(element, row)
+    refs.tail.append(element)
+  })
+  for (const [key, element] of refs.rows) if (!wanted.has(key)) { element.remove(); refs.rows.delete(key) }
+
   if (rows.length > 3) {
-    const toggle = node('button', 'tail-more', expanded ? 'Show latest' : `+${rows.length - 3} earlier`)
-    toggle.type = 'button'
-    toggle.setAttribute('aria-label', expanded ? `Collapse changes for ${item.title}` : `Show ${rows.length - 3} earlier changes for ${item.title}`)
-    toggle.addEventListener('click', event => {
-      event.stopPropagation()
-      expanded ? state.expandedTails.delete(item.id) : state.expandedTails.add(item.id)
-      render(model)
-    })
-    tail.append(toggle)
+    if (!refs.more) {
+      refs.more = node('button', 'tail-more')
+      refs.more.type = 'button'
+      refs.more.addEventListener('click', event => {
+        event.stopPropagation()
+        const id = card.closest('.graph-node')?.dataset.nodeId
+        if (!id) return
+        state.expandedTails.has(id) ? state.expandedTails.delete(id) : state.expandedTails.add(id)
+        if (state.expandedTails.has(id)) {
+          const group = card.closest('.graph-node')
+          group?.parentElement?.append(group)
+        }
+        render()
+      })
+    }
+    refs.more.textContent = expanded ? 'Show latest' : `+${rows.length - 3} earlier`
+    const earlier = rows.length - 3
+    refs.more.setAttribute('aria-label', expanded ? `Collapse changes for ${item.title}` : `Show ${earlier} earlier ${earlier === 1 ? 'change' : 'changes'} for ${item.title}`)
+    refs.tail.append(refs.more)
+  } else if (refs.more) {
+    refs.more.remove()
+    refs.more = null
   }
-  card.append(band, identity)
-  if (rows.length) card.append(tail)
   card.style.height = `${height}px`
-  return card
+}
+
+function setSvgAttributes(element, attributes) {
+  for (const [name, value] of Object.entries(attributes)) {
+    if (value === undefined || value === null || value === false) element.removeAttribute(name)
+    else if (element.getAttribute(name) !== String(value)) element.setAttribute(name, String(value))
+  }
+}
+
+function resetCamera(context = null) {
+  state.camera = null
+  state.cameraBounds = null
+  state.cameraContext = context
+  state.userMovedCamera = false
+}
+
+function updateCamera() {
+  const graph = state.graph
+  if (!graph || !state.camera) return
+  const { x, y, width, height } = state.camera
+  graph.svg.setAttribute('viewBox', `${x} ${y} ${width} ${height}`)
+  const fittedWidth = Math.max(1, state.cameraBounds?.width || width)
+  graph.zoomValue.textContent = `${Math.round(fittedWidth / width * 100)}%`
+}
+
+function ensureGraphShell(flow) {
+  if (state.graph?.shell?.isConnected) return state.graph
+
+  const shell = node('div', 'graph-shell')
+  const svg = svgNode('svg', { class: 'work-graph', role: 'img', preserveAspectRatio: 'xMinYMin meet', 'aria-labelledby': 'graph-title graph-description' })
+  svg.append(svgNode('title', { id: 'graph-title' }, 'WordPress agent work map'), svgNode('desc', { id: 'graph-description' }, 'Durable WordPress places stay at fixed top-left positions while recorded work travels over labeled flows.'))
+  const defs = svgNode('defs')
+  const pattern = svgNode('pattern', { id: 'graph-grid', width: 24, height: 24, patternUnits: 'userSpaceOnUse' })
+  pattern.append(svgNode('circle', { cx: 1, cy: 1, r: 1, class: 'graph-grid-dot' }))
+  const marker = svgNode('marker', { id: 'graph-arrow', viewBox: '0 0 10 10', refX: 8.5, refY: 5, markerWidth: 9, markerHeight: 9, markerUnits: 'userSpaceOnUse', orient: 'auto' })
+  marker.append(svgNode('path', { d: 'M1 1.5 8 5 1 8.5', class: 'graph-arrow' }))
+  defs.append(pattern, marker)
+  const grid = svgNode('rect', { width: '100%', height: '100%', class: 'graph-grid-fill' })
+  const world = svgNode('g', { class: 'graph-world' })
+  const laneLayer = svgNode('g', { class: 'graph-lanes', 'aria-hidden': true })
+  const edgeLayer = svgNode('g', { class: 'graph-edges' })
+  const nodeLayer = svgNode('g', { class: 'graph-nodes' })
+  world.append(laneLayer, edgeLayer, nodeLayer)
+  svg.append(defs, grid, world)
+
+  const controlIcon = paths => {
+    const icon = svgNode('svg', { viewBox: '0 0 24 24', 'aria-hidden': true })
+    for (const d of paths) icon.append(svgNode('path', { d }))
+    return icon
+  }
+  const controls = node('div', 'graph-controls')
+  const zoomOut = node('button', 'graph-control'); zoomOut.type = 'button'; zoomOut.setAttribute('aria-label', 'Zoom graph out'); zoomOut.append(controlIcon(['M6 12h12']))
+  const zoomValue = node('span', 'graph-zoom', '100%')
+  const zoomIn = node('button', 'graph-control'); zoomIn.type = 'button'; zoomIn.setAttribute('aria-label', 'Zoom graph in'); zoomIn.append(controlIcon(['M12 6v12', 'M6 12h12']))
+  const fit = node('button', 'graph-control fit'); fit.type = 'button'; fit.setAttribute('aria-label', 'Fit graph to view'); fit.append(controlIcon(['M9 4H4v5', 'M15 4h5v5', 'M20 15v5h-5', 'M4 15v5h5']))
+  controls.append(zoomOut, zoomValue, zoomIn, fit)
+  const empty = node('div', 'empty-board')
+  empty.append(node('p', '', 'The map grows when the first durable place is touched.'), node('p', '', 'No account, no telemetry, nothing leaves this machine.'))
+  shell.append(svg, controls, empty)
+  while (flow.firstChild) flow.firstChild.remove()
+  flow.append(shell)
+
+  const graph = state.graph = {
+    shell, svg, world, laneLayer, edgeLayer, nodeLayer, controls, empty, zoomValue,
+    nodeElements: new Map(), edgeElements: new Map(), laneElements: new Map(),
+    model: null, topology: null, pan: null,
+  }
+
+  const zoom = factor => {
+    if (!state.camera) return
+    const width = state.camera.width * factor
+    const height = state.camera.height * factor
+    state.camera = {
+      x: state.camera.x + (state.camera.width - width) / 2,
+      y: state.camera.y + (state.camera.height - height) / 2,
+      width,
+      height,
+    }
+    state.userMovedCamera = true
+    updateCamera()
+  }
+  zoomIn.addEventListener('click', event => { event.stopPropagation(); zoom(.82) })
+  zoomOut.addEventListener('click', event => { event.stopPropagation(); zoom(1.22) })
+  fit.addEventListener('click', event => {
+    event.stopPropagation()
+    if (!state.cameraBounds) return
+    state.camera = { ...state.cameraBounds }
+    state.userMovedCamera = true
+    updateCamera()
+  })
+  svg.addEventListener('pointerdown', event => {
+    if (event.target.closest('.graph-node, .graph-edge-hit')) return
+    svg.setPointerCapture(event.pointerId)
+    graph.pan = { x: event.clientX, y: event.clientY, viewX: state.camera.x, viewY: state.camera.y }
+  })
+  svg.addEventListener('pointermove', event => {
+    if (!graph.pan || !state.camera) return
+    const box = svg.getBoundingClientRect()
+    state.camera.x = graph.pan.viewX - (event.clientX - graph.pan.x) * state.camera.width / box.width
+    state.camera.y = graph.pan.viewY - (event.clientY - graph.pan.y) * state.camera.height / box.height
+    state.userMovedCamera = true
+    updateCamera()
+  })
+  svg.addEventListener('pointerup', () => { graph.pan = null })
+  svg.addEventListener('pointercancel', () => { graph.pan = null })
+  svg.addEventListener('wheel', event => {
+    event.preventDefault()
+    event.stopPropagation()
+    zoom(event.deltaY < 0 ? .9 : 1.1)
+  }, { passive: false })
+  return graph
+}
+
+function createEdgeElement(edge) {
+  const group = svgNode('g', { class: 'graph-edge-group', 'data-edge-id': edge.id })
+  const path = svgNode('path')
+  const hit = svgNode('path', { class: 'graph-edge-hit' })
+  const label = svgNode('text', { class: 'graph-edge-label', 'text-anchor': 'middle' })
+  group.append(path, hit, label)
+  const entry = { id: edge.id, group, path, hit, label, particle: null, motion: null }
+  const select = event => {
+    event.stopPropagation()
+    if (entry.future) return
+    openInspector({ kind: 'edge', id: entry.id }, state.graph.model, state.graph.topology)
+  }
+  hit.addEventListener('click', select)
+  hit.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(event) } })
+  return entry
+}
+
+function createLaneElement(lane) {
+  const group = svgNode('g', { class: 'graph-lane', 'data-lane-id': lane.id })
+  const frame = svgNode('rect', { rx: 12 })
+  const label = svgNode('text', { class: 'graph-lane-label' })
+  group.append(frame, label)
+  return { id: lane.id, group, frame, label }
+}
+
+function createNodeElement(item, nodeW, height, model) {
+  const group = svgNode('g', { 'data-node-id': item.id })
+  const foreign = svgNode('foreignObject', { class: 'place-card-foreign', x: 0, y: 0, width: nodeW, height })
+  const card = placeCard(item, height, model)
+  foreign.append(card)
+  const inPort = svgNode('circle', { class: 'graph-port', cx: 0, cy: 15, r: 4 })
+  const outPort = svgNode('circle', { class: 'graph-port', cx: nodeW, cy: 15, r: 4 })
+  group.append(foreign, inPort, outPort)
+  const entry = { id: item.id, group, foreign, card, inPort, outPort, future: item.future }
+  const select = event => {
+    if (entry.future || event.target.closest?.('.tail-more')) return
+    event.stopPropagation()
+    openInspector({ kind: 'place', id: entry.id }, state.graph.model, state.graph.topology)
+  }
+  group.addEventListener('click', select)
+  group.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(event) } })
+  return entry
+}
+
+function showNodeBirth(group) {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  group.classList.remove('birth')
+  requestAnimationFrame(() => group.classList.add('birth'))
+  const clean = () => group.classList.remove('birth')
+  group.addEventListener('animationend', clean, { once: true })
+  setTimeout(clean, 700)
 }
 
 function renderComponents(model, topology = currentTopology(model)) {
   const flow = $('component-flow')
+  const graph = ensureGraphShell(flow)
+  graph.model = model
+  graph.topology = topology
   const plannedComponents = (model.plan?.nodes || []).filter(item => item.level === 'component')
   const declarations = model.repository?.declarations || []
-  const components = topology.nodes.length ? [] : plannedComponents
+  const target = model.session?.target || model.daemon?.target || ''
+  const siteSession = topology.nodes.length > 0 || model.session?.targetType === 'site' || model.daemon?.targetType === 'site' || /^https?:\/\//.test(target)
+  const components = siteSession ? [] : plannedComponents
   const graphNodes = []
   const graphEdges = []
 
@@ -381,7 +650,7 @@ function renderComponents(model, topology = currentTopology(model)) {
     for (const component of components) for (const need of component.needs || []) if (byId[need]) graphEdges.push({ from: need, to: component.id, kind: 'dependency' })
   }
 
-  if (topology.nodes.length) {
+  if (siteSession) {
     graphNodes.push({
       id: topology.root.id,
       group: 'site',
@@ -405,9 +674,10 @@ function renderComponents(model, topology = currentTopology(model)) {
       address: entity.identity,
       identity: entity.identity,
       title: entity.title,
-      stateLine: entity.future ? 'Not reached yet' : entity.stateLine,
+      stateLine: entity.future ? 'Not reached yet' : ['declared', 'unconfirmed'].includes(entity.visibility) ? null : entity.stateLine,
       changes: entity.changes,
       future: entity.future,
+      visibility: entity.visibility,
       flowState: entity.flowState,
       current: entity.current,
       seq: entity.lastSeq,
@@ -418,10 +688,25 @@ function renderComponents(model, topology = currentTopology(model)) {
       ...edge,
       kind: 'channel',
       label: displayChannel(edge.channel),
-      claim: topology.focus?.edge.id === edge.id && !topology.focus.change.confirmation ? topology.focus.change.claim?.summary : null,
       future: edge.future || (futureIds.has(edge.to) && edge.flowState === 'idle'),
       duration: edge.durationMs,
     })
+  }
+
+  const labeledChannels = new Map()
+  for (const edge of graphEdges.filter(edge => edge.kind === 'channel' && !edge.future)) {
+    const current = labeledChannels.get(edge.channel)
+    if (!current || edge.active) labeledChannels.set(edge.channel, edge)
+  }
+  let channelLabelIndex = 0
+  for (const edge of graphEdges.filter(edge => edge.kind === 'channel')) {
+    const representative = labeledChannels.get(edge.channel)
+    if (representative?.id !== edge.id) edge.label = null
+    else if (edge.active && edge.actor) {
+      const actorName = typeof edge.actor === 'string' ? edge.actor : edge.actor.login || edge.actor.name
+      edge.label = actorName ? `${displayChannel(edge.channel)} · ${actorName}` : displayChannel(edge.channel)
+    }
+    if (representative?.id === edge.id) edge.channelLabelIndex = channelLabelIndex++
   }
 
   if (!graphNodes.length && declarations.length) declarations.slice(0, 8).forEach((declaration, index) => graphNodes.push({
@@ -429,28 +714,35 @@ function renderComponents(model, topology = currentTopology(model)) {
   }))
 
   if (!graphNodes.length) {
-    const empty = node('div', 'empty-board')
-    empty.append(node('p', '', 'The map grows when the first durable place is touched.'), node('p', '', 'No account, no telemetry, nothing leaves this machine.'))
-    flow.replaceChildren(empty)
+    graph.empty.hidden = false
+    graph.svg.hidden = true
+    graph.controls.hidden = true
+    for (const entry of graph.nodeElements.values()) entry.group.remove()
+    for (const entry of graph.edgeElements.values()) entry.group.remove()
+    for (const entry of graph.laneElements.values()) entry.group.remove()
+    graph.nodeElements.clear()
+    graph.edgeElements.clear()
+    graph.laneElements.clear()
     return
   }
+  graph.empty.hidden = true
+  graph.svg.hidden = false
+  graph.controls.hidden = false
 
   const compact = window.innerWidth <= 680
   const flowWidth = Math.max(320, flow.clientWidth || 1440)
   const flowHeight = Math.max(360, flow.clientHeight || window.innerHeight - 48)
   const nodeW = compact ? Math.min(320, Math.max(280, flowWidth - 48)) : 320
-  const layoutNodeH = 238
+  const layoutNodeH = compact ? 238 : 220
   const gapX = compact ? 38 : 112
-  const gapY = compact ? 28 : 38
+  const gapY = compact ? 28 : 24
   const padX = compact ? 24 : 42
   const edgeLabelStep = 17
-  const labelCounts = new Map()
-  for (const edge of graphEdges) if (edge.label) labelCounts.set(edge.to, (labelCounts.get(edge.to) || 0) + 1)
-  const maxLabelStack = Math.max(0, ...labelCounts.values())
-  const padY = compact ? 56 : Math.max(44, 26 + Math.max(0, maxLabelStack - 1) * edgeLabelStep)
+  const padY = compact ? 56 : 44
   const metrics = Object.fromEntries(graphNodes.map(item => [item.id, { w: nodeW, h: cardHeight(item) }]))
   const planNodes = graphNodes.filter(item => item.group === 'plan')
   const siteNodes = graphNodes.filter(item => item.group === 'site')
+  let layoutLanes = []
 
   const layoutPlan = items => {
     const columns = {}
@@ -459,32 +751,21 @@ function renderComponents(model, topology = currentTopology(model)) {
   }
   layoutPlan(planNodes)
   if (siteNodes.length) {
-    const siteLayout = layoutSiteTopology(topology, { compact, nodeW, nodeH: layoutNodeH, gapX, gapY, padX, padY })
+    const layoutSessionId = model.session?.sessionId || model.daemon?.sessionId || state.sessionId || 'current'
+    if (!state.layoutSeeds.has(layoutSessionId)) state.layoutSeeds.set(layoutSessionId, { desktopWrapColumns: 4 })
+    const siteLayout = layoutSiteTopology(topology, { compact, nodeW, nodeH: layoutNodeH, nodeHeights: Object.fromEntries(Object.entries(metrics).map(([id, metric]) => [id, metric.h])), gapX, gapY, padX, padY, layoutSeed: state.layoutSeeds.get(layoutSessionId) })
+    layoutLanes = siteLayout.lanes || []
     const positions = new Map(siteLayout.nodes.map(item => [item.id, item]))
-    const columnShift = new Map()
     for (const item of siteNodes) {
       const position = positions.get(item.id) || { x: padX, y: padY, depth: 0 }
-      const shift = columnShift.get(position.depth) || 0
-      Object.assign(item, { x: position.x, y: position.y + shift, depth: position.depth })
-      columnShift.set(position.depth, shift + Math.max(0, metrics[item.id].h - layoutNodeH))
+      Object.assign(item, { x: position.x, y: position.y, depth: position.depth })
     }
   }
 
-  const graphRight = Math.max(flowWidth, ...graphNodes.map(item => item.x + nodeW + padX))
-  const graphBottom = Math.max(flowHeight, ...graphNodes.map(item => item.y + metrics[item.id].h + padY))
+  const occupiedNodes = graphNodes.filter(item => !item.future)
+  const graphRight = Math.max(compact ? flowWidth : 720, ...occupiedNodes.map(item => item.x + nodeW + padX))
+  const graphBottom = Math.max(compact ? flowHeight : 420, ...occupiedNodes.map(item => item.y + metrics[item.id].h + padY))
   const byGraphId = Object.fromEntries(graphNodes.map(item => [item.id, item]))
-  const shell = node('div', 'graph-shell')
-  const svg = svgNode('svg', { class: 'work-graph', role: 'img', preserveAspectRatio: 'xMinYMin meet', 'aria-labelledby': 'graph-title graph-description' })
-  svg.append(svgNode('title', { id: 'graph-title' }, 'WordPress agent work map'), svgNode('desc', { id: 'graph-description' }, 'Durable WordPress places stay at fixed top-left positions while recorded work travels over labeled flows.'))
-  const defs = svgNode('defs')
-  const pattern = svgNode('pattern', { id: 'graph-grid', width: 24, height: 24, patternUnits: 'userSpaceOnUse' })
-  pattern.append(svgNode('circle', { cx: 1, cy: 1, r: 1, class: 'graph-grid-dot' }))
-  const marker = svgNode('marker', { id: 'graph-arrow', viewBox: '0 0 10 10', refX: 8.5, refY: 5, markerWidth: 9, markerHeight: 9, markerUnits: 'userSpaceOnUse', orient: 'auto' })
-  marker.append(svgNode('path', { d: 'M1 1.5 8 5 1 8.5', class: 'graph-arrow' }))
-  defs.append(pattern, marker)
-  svg.append(defs, svgNode('rect', { width: '100%', height: '100%', class: 'graph-grid-fill' }))
-  const world = svgNode('g', { class: 'graph-world' })
-
   const edgeGroups = new Map()
   for (const edge of graphEdges) (edgeGroups.get(edge.to) || edgeGroups.set(edge.to, []).get(edge.to)).push(edge)
   for (const list of edgeGroups.values()) list.forEach((edge, index) => { edge.laneOffset = (index - (list.length - 1) / 2) * 12 })
@@ -503,93 +784,107 @@ function renderComponents(model, topology = currentTopology(model)) {
   }
 
   const labelStacks = new Map()
+
+  const wantedLanes = new Set()
+  for (const lane of layoutLanes) {
+    wantedLanes.add(lane.id)
+    let entry = graph.laneElements.get(lane.id)
+    if (!entry) {
+      entry = createLaneElement(lane)
+      graph.laneElements.set(lane.id, entry)
+      graph.laneLayer.append(entry.group)
+    }
+    setSvgAttributes(entry.group, { class: `graph-lane${lane.empty ? ' empty' : ''}` })
+    setSvgAttributes(entry.frame, { x: lane.x, y: lane.y, width: lane.width, height: lane.height })
+    setSvgAttributes(entry.label, { x: lane.x + 12, y: lane.y + (lane.empty ? 15 : 16) })
+    entry.label.textContent = lane.category
+  }
+  for (const [id, entry] of graph.laneElements) if (!wantedLanes.has(id)) { entry.group.remove(); graph.laneElements.delete(id) }
+
+  const wantedEdges = new Set()
   for (const edge of graphEdges) {
     const from = byGraphId[edge.from], to = byGraphId[edge.to]
     if (!from || !to) continue
+    wantedEdges.add(edge.id)
     const pathData = edgePath(from, to, edge)
     const pathClass = `graph-edge ${edge.kind}${edge.flowState ? ` ${edge.flowState}` : ''}${edge.active ? ' active' : ''}${edge.future ? ' future' : ''}`
-    world.append(svgNode('path', { d: pathData, class: pathClass, 'data-edge-id': edge.id, 'data-flow-state': edge.flowState, 'data-from': edge.from, 'data-to': edge.to, style: edge.active ? `--flow-duration:${edge.duration}ms` : null, 'aria-hidden': edge.future ? true : null, 'marker-end': edge.kind === 'link' || edge.future ? null : 'url(#graph-arrow)' }))
-    if (!edge.future) {
-      const hit = svgNode('path', { d: pathData, class: 'graph-edge-hit', tabindex: 0, role: 'button', 'aria-label': `Inspect ${edge.label || edge.kind} flow`, 'data-edge-id': edge.id })
-      const select = event => { event.stopPropagation(); openInspector({ kind: 'edge', id: edge.id }, model, topology) }
-      hit.addEventListener('click', select)
-      hit.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(event) } })
-      world.append(hit)
+    let entry = graph.edgeElements.get(edge.id)
+    if (!entry) {
+      entry = createEdgeElement(edge)
+      graph.edgeElements.set(edge.id, entry)
+      graph.edgeLayer.append(entry.group)
     }
+    entry.future = edge.future
+    setSvgAttributes(entry.path, { d: pathData, class: pathClass, 'data-edge-id': edge.id, 'data-flow-state': edge.flowState, 'data-from': edge.from, 'data-to': edge.to, style: edge.active ? `--flow-duration:${edge.duration}ms` : null, 'aria-hidden': edge.future ? true : null, 'marker-end': edge.kind === 'link' || edge.future ? null : 'url(#graph-arrow)' })
+    setSvgAttributes(entry.hit, { d: pathData, tabindex: edge.future ? null : 0, role: edge.future ? null : 'button', 'aria-label': edge.future ? null : `Inspect ${edge.label || edge.kind} flow`, 'data-edge-id': edge.id })
+    entry.hit.hidden = edge.future
     if (edge.label && !edge.future) {
       const vertical = Math.abs(from.x - to.x) < 30 || compact
-      const labelX = vertical ? to.x + nodeW / 2 + edge.laneOffset : (from.x + nodeW + to.x) / 2
-      const labelYBase = vertical ? to.y - 12 : to.y - 10
+      const resting = edge.kind === 'channel' && !edge.active
+      const labelX = resting ? from.x + nodeW + 16 : vertical ? to.x + nodeW / 2 + edge.laneOffset : (from.x + nodeW + to.x) / 2
+      const labelYBase = resting ? from.y + 19 + (edge.channelLabelIndex || 0) * edgeLabelStep : vertical ? to.y - 12 : to.y - 10
       const labelKey = `${Math.round(labelX / 48)}:${Math.round(labelYBase / 24)}`
       const stacked = labelStacks.get(labelKey) || 0
       labelStacks.set(labelKey, stacked + 1)
-      world.append(svgNode('text', { class: `graph-edge-label${edge.active ? ' active' : ''}`, x: labelX, y: labelYBase - stacked * edgeLabelStep, 'text-anchor': 'middle' }, edge.label.slice(0, 30)))
-    }
-    if (edge.claim && !edge.future) world.append(svgNode('text', { class: 'graph-flow-claim', x: to.x + 14, y: to.y - 28 }, edge.claim.length > 48 ? `${edge.claim.slice(0, 47)}…` : edge.claim))
+      setSvgAttributes(entry.label, { class: `graph-edge-label${edge.active ? ' active' : ''}`, x: labelX, y: labelYBase - stacked * edgeLabelStep, 'text-anchor': resting ? 'start' : 'middle' })
+      entry.label.textContent = edge.label.slice(0, 30)
+      entry.label.toggleAttribute('hidden', false)
+    } else entry.label.toggleAttribute('hidden', true)
     if (edge.active && !edge.future) {
-      const particle = svgNode('circle', { r: 4, class: 'energy-particle', 'data-edge-id': edge.id, 'data-duration': edge.duration })
-      particle.append(svgNode('animateMotion', { dur: `${edge.duration}ms`, repeatCount: 'indefinite', path: pathData }))
-      world.append(particle)
+      if (!entry.particle) {
+        entry.particle = svgNode('circle', { r: 4, class: 'energy-particle', 'data-edge-id': edge.id })
+        entry.motion = svgNode('animateMotion', { repeatCount: 'indefinite' })
+        entry.particle.append(entry.motion)
+        entry.group.append(entry.particle)
+      }
+      setSvgAttributes(entry.particle, { 'data-duration': edge.duration })
+      setSvgAttributes(entry.motion, { dur: `${edge.duration}ms`, path: pathData })
+    } else if (entry.particle) {
+      entry.particle.remove()
+      entry.particle = null
+      entry.motion = null
     }
   }
+  for (const [id, entry] of graph.edgeElements) if (!wantedEdges.has(id)) { entry.group.remove(); graph.edgeElements.delete(id) }
 
+  const wantedNodes = new Set()
   for (const item of graphNodes) {
+    wantedNodes.add(item.id)
     const selected = state.inspectorSelection?.kind === 'place' && state.inspectorSelection.id === item.id
     const flowClass = item.flowState || 'idle'
-    const classes = `graph-node ${flowClass} ${item.kind}${selected ? ' selected' : ''}${item.future ? ' future' : ''}${item.current ? ' current' : ''}`
-    const group = svgNode('g', { class: classes, 'data-node-id': item.id, 'data-node-kind': item.kind, 'data-node-group': item.group, 'data-flow-state': flowClass, transform: `translate(${item.x} ${item.y})`, tabindex: item.future ? null : 0, role: item.future ? null : 'button', 'aria-hidden': item.future ? true : null, 'aria-label': item.future ? null : `Inspect ${item.title}` })
+    const classes = `graph-node ${flowClass} ${item.kind}${selected ? ' selected' : ''}${item.future ? ' future' : ''}${item.visibility === 'declared' ? ' provisional' : ''}${item.visibility === 'unconfirmed' ? ' unconfirmed' : ''}${item.current ? ' current' : ''}`
+    const height = metrics[item.id].h
+    let entry = graph.nodeElements.get(item.id)
+    const created = !entry
+    if (!entry) {
+      entry = createNodeElement(item, nodeW, height, model)
+      graph.nodeElements.set(item.id, entry)
+      graph.nodeLayer.append(entry.group)
+    }
+    const group = entry.group
     const previous = state.nodePositions.get(item.id)
     if (previous && (previous.x !== item.x || previous.y !== item.y) && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      group.append(svgNode('animateTransform', { attributeName: 'transform', type: 'translate', from: `${previous.x} ${previous.y}`, to: `${item.x} ${item.y}`, dur: '620ms', fill: 'freeze', calcMode: 'spline', keySplines: '.16 1 .3 1' }))
+      group.querySelector('animateTransform')?.remove()
+      const glide = svgNode('animateTransform', { attributeName: 'transform', type: 'translate', from: `${previous.x} ${previous.y}`, to: `${item.x} ${item.y}`, dur: '620ms', fill: 'freeze', calcMode: 'spline', keySplines: '.16 1 .3 1' })
+      glide.addEventListener('endEvent', () => glide.remove(), { once: true })
+      group.append(glide)
     }
-    const height = metrics[item.id].h
-    const foreign = svgNode('foreignObject', { class: 'place-card-foreign', x: 0, y: 0, width: nodeW, height })
-    foreign.append(placeCard(item, height, model))
-    group.append(foreign)
-    if (!item.topologyRoot) group.append(svgNode('circle', { class: `graph-port${flowClass === 'live' ? ' live' : ''}`, cx: 0, cy: 15, r: 4 }))
-    group.append(svgNode('circle', { class: `graph-port${flowClass === 'live' ? ' live' : ''}`, cx: nodeW, cy: 15, r: 4 }))
-    const select = event => {
-      if (event.target.closest?.('.tail-more')) return
-      event.stopPropagation()
-      openInspector({ kind: 'place', id: item.id }, model, topology)
-    }
-    if (!item.future) {
-      group.addEventListener('click', select)
-      group.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(event) } })
-    }
-    world.append(group)
+    const becameVisible = entry.future && !item.future
+    entry.future = item.future
+    setSvgAttributes(group, { class: classes, 'data-node-kind': item.kind, 'data-node-group': item.group, 'data-flow-state': flowClass, transform: `translate(${item.x} ${item.y})`, tabindex: item.future ? null : 0, role: item.future ? null : 'button', 'aria-hidden': item.future ? true : null, 'aria-label': item.future ? null : `Inspect ${item.title}` })
+    setSvgAttributes(entry.foreign, { width: nodeW, height })
+    patchPlaceCard(entry.card, item, height, model)
+    entry.inPort.hidden = Boolean(item.topologyRoot)
+    setSvgAttributes(entry.inPort, { class: `graph-port${flowClass === 'live' ? ' live' : ''}` })
+    setSvgAttributes(entry.outPort, { class: `graph-port${flowClass === 'live' ? ' live' : ''}`, cx: nodeW })
+    if ((created && !item.future) || becameVisible) showNodeBirth(group)
   }
+  for (const [id, entry] of graph.nodeElements) if (!wantedNodes.has(id)) { entry.group.remove(); graph.nodeElements.delete(id) }
   state.nodePositions = new Map(graphNodes.map(item => [item.id, { x: item.x, y: item.y }]))
-
-  svg.append(world)
-  const controlIcon = paths => {
-    const icon = svgNode('svg', { viewBox: '0 0 24 24', 'aria-hidden': true })
-    for (const d of paths) icon.append(svgNode('path', { d }))
-    return icon
-  }
-  const controls = node('div', 'graph-controls')
-  const zoomOut = node('button', 'graph-control'); zoomOut.type = 'button'; zoomOut.setAttribute('aria-label', 'Zoom graph out'); zoomOut.append(controlIcon(['M6 12h12']))
-  const zoomValue = node('span', 'graph-zoom', '100%')
-  const zoomIn = node('button', 'graph-control'); zoomIn.type = 'button'; zoomIn.setAttribute('aria-label', 'Zoom graph in'); zoomIn.append(controlIcon(['M12 6v12', 'M6 12h12']))
-  const fit = node('button', 'graph-control fit'); fit.type = 'button'; fit.setAttribute('aria-label', 'Fit graph to view'); fit.append(controlIcon(['M9 4H4v5', 'M15 4h5v5', 'M20 15v5h-5', 'M4 15v5h5']))
-  controls.append(zoomOut, zoomValue, zoomIn, fit)
-  shell.append(svg, controls)
-  flow.replaceChildren(shell)
-
-  let view = { x: 0, y: 0, width: graphRight, height: graphBottom }
-  const fitted = { ...view }
-  const updateView = () => { svg.setAttribute('viewBox', `${view.x} ${view.y} ${view.width} ${view.height}`); zoomValue.textContent = `${Math.round(fitted.width / view.width * 100)}%` }
-  const zoom = factor => { const width = view.width * factor, height = view.height * factor; view = { x: view.x + (view.width - width) / 2, y: view.y + (view.height - height) / 2, width, height }; updateView() }
-  zoomIn.addEventListener('click', () => zoom(.82))
-  zoomOut.addEventListener('click', () => zoom(1.22))
-  fit.addEventListener('click', () => { view = { ...fitted }; updateView() })
-  let pan = null
-  svg.addEventListener('pointerdown', event => { if (event.target.closest('.graph-node, .graph-edge-hit')) return; svg.setPointerCapture(event.pointerId); pan = { x: event.clientX, y: event.clientY, viewX: view.x, viewY: view.y } })
-  svg.addEventListener('pointermove', event => { if (!pan) return; const box = svg.getBoundingClientRect(); view.x = pan.viewX - (event.clientX - pan.x) * view.width / box.width; view.y = pan.viewY - (event.clientY - pan.y) * view.height / box.height; updateView() })
-  svg.addEventListener('pointerup', () => { pan = null })
-  svg.addEventListener('pointercancel', () => { pan = null })
-  svg.addEventListener('wheel', event => { event.preventDefault(); zoom(event.deltaY < 0 ? .9 : 1.1) }, { passive: false })
-  updateView()
+  const bounds = { x: 0, y: 0, width: graphRight, height: graphBottom }
+  state.cameraBounds = bounds
+  if (!state.camera || !state.userMovedCamera) state.camera = { ...bounds }
+  updateCamera()
 }
 
 function inspectorSection(title) {
@@ -624,6 +919,7 @@ function inspectorChanges(changes, model) {
     entry.append(factList([
       ['Claim', change.claim?.summary || 'No declared claim'],
       ['Confirmation', change.confirmation?.summary || (change.status === 'in-flight' ? 'Awaiting WordPress' : 'No confirmation')],
+      ['Name at this change', change.state?.title || change.confirmation?.state?.title],
       ['Channel', displayChannel(change.channel)],
       ['Transport', change.transport || change.confirmation?.transport || change.claim?.transport],
       ['Request', requestId],
@@ -744,6 +1040,17 @@ function render(model = currentProjection()) {
   renderInspector(model, topology)
 }
 
+function scheduleRender(model = currentProjection()) {
+  state.pendingRenderModel = model
+  if (state.renderFrame !== null) return
+  state.renderFrame = requestAnimationFrame(() => {
+    state.renderFrame = null
+    const pending = state.pendingRenderModel
+    state.pendingRenderModel = null
+    render(pending)
+  })
+}
+
 async function fetchJson(url) {
   const response = await fetch(url, { headers: { accept: 'application/json' } })
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
@@ -761,34 +1068,38 @@ async function loadLive() {
   state.sessions = sessions
   state.liveEvents = events
   state.cursor = Math.max(0, events.length - 1)
+  const context = `${state.sessionId || 'none'}:live`
+  if (state.cameraContext !== context) resetCamera(context)
   render(state.liveModel)
 }
 
-async function selectSession(sessionId, { updateUrl = true } = {}) {
+async function selectSession(sessionId, { updateUrl = true, renderNow = true } = {}) {
   stopPlayback()
   if (!sessionId) return
-  if (sessionId === state.liveModel.daemon?.sessionId) {
+  if (sessionId === (state.liveModel.daemon?.sessionId || state.liveModel.session?.sessionId)) {
     state.mode = 'live'
     state.sessionId = sessionId
     state.inspectorSelection = null
+    resetCamera(`${sessionId}:live`)
     syncModeButtons()
-    render(state.liveModel)
+    if (renderNow) render(state.liveModel)
     if (updateUrl) syncDeepLink()
     return
   }
-  state.replayEvents = await fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/events`)
+  state.replayEvents = playbackTrailEvents(await fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/events`))
   state.replayIndex = buildReplayIndex(state.replayEvents)
   state.sessionId = sessionId
   state.mode = 'replay'
   state.cursor = Math.max(0, state.replayEvents.length - 1)
   state.inspectorSelection = null
+  resetCamera(`${sessionId}:replay`)
   syncModeButtons()
-  render()
+  if (renderNow) render()
   if (updateUrl) syncDeepLink()
 }
 
 function syncModeButtons() {
-  for (const button of document.querySelectorAll('[data-mode]')) button.setAttribute('aria-selected', String(button.dataset.mode === state.mode))
+  for (const button of document.querySelectorAll('.mode-switch button[data-mode]')) button.setAttribute('aria-selected', String(button.dataset.mode === state.mode))
 }
 
 function setMode(mode, { updateUrl = true } = {}) {
@@ -800,14 +1111,16 @@ function setMode(mode, { updateUrl = true } = {}) {
     state.cursor = Math.max(0, state.liveEvents.length - 1)
   } else {
     if (!state.replayEvents.length) {
-      state.replayEvents = [...state.liveEvents]
+      state.replayEvents = playbackTrailEvents(state.liveEvents)
       state.replayIndex = buildReplayIndex(state.replayEvents)
     }
     state.cursor = mode === 'timelapse' ? 0 : Math.max(0, state.replayEvents.length - 1)
   }
+  resetCamera(`${state.sessionId || 'none'}:${mode}`)
   syncModeButtons()
   render()
   if (updateUrl) syncDeepLink()
+  if (mode === 'timelapse' && state.replayEvents.length > 1) startPlayback()
 }
 
 async function applyDeepLink() {
@@ -816,7 +1129,7 @@ async function applyDeepLink() {
   const knownSession = requestedSession && state.sessions.some(session => session.id === requestedSession)
   const staleSession = Boolean(requestedSession && !knownSession)
 
-  if (knownSession) await selectSession(requestedSession, { updateUrl: false })
+  if (knownSession) await selectSession(requestedSession, { updateUrl: false, renderNow: false })
 
   if (!staleSession) {
     const requestedMode = params.get('mode')
@@ -828,7 +1141,7 @@ async function applyDeepLink() {
         state.cursor = Math.max(0, state.liveEvents.length - 1)
       } else if (requestedMode !== 'live') {
         if (!state.replayEvents.length) {
-          state.replayEvents = [...state.liveEvents]
+          state.replayEvents = playbackTrailEvents(state.liveEvents)
           state.replayIndex = buildReplayIndex(state.replayEvents)
         }
         state.mode = requestedMode
@@ -855,12 +1168,62 @@ async function applyDeepLink() {
   syncModeButtons()
   render()
   syncDeepLink()
+  if (state.mode === 'timelapse' && state.replayEvents.length > 1) startPlayback()
 }
 
 function stopPlayback() {
   state.playing = false
-  clearInterval(state.timer)
+  clearTimeout(state.timer)
   state.timer = null
+}
+
+function isVisualPlaybackEvent(event) {
+  return event?.kind !== 'presence.heartbeat'
+}
+
+function playbackTrailEvents(events) {
+  return events.filter(isVisualPlaybackEvent)
+}
+
+function nextPlaybackCursor() {
+  const last = state.replayEvents.length - 1
+  let next = Math.min(last, state.cursor + 1)
+  while (next < last && !isVisualPlaybackEvent(state.replayEvents[next])) next++
+  return next
+}
+
+function playbackDelay(from, to) {
+  const raw = Math.max(0, (state.replayEvents[to]?.ts || 0) - (state.replayEvents[from]?.ts || 0))
+  if (state.mode === 'timelapse') return Math.max(90, Math.min(260, raw * .035 || 180))
+  return Math.max(180, Math.min(1200, raw || 420))
+}
+
+function schedulePlayback() {
+  if (!state.playing) return
+  const next = nextPlaybackCursor()
+  if (next <= state.cursor || state.cursor >= state.replayEvents.length - 1) {
+    stopPlayback()
+    render()
+    syncDeepLink()
+    return
+  }
+  state.timer = setTimeout(() => {
+    const previous = state.cursor
+    state.cursor = next
+    if (state.cursor >= state.replayEvents.length - 1) stopPlayback()
+    render()
+    syncDeepLink()
+    if (state.playing) schedulePlayback(previous)
+  }, playbackDelay(state.cursor, next))
+}
+
+function startPlayback() {
+  if (state.playing || state.replayEvents.length < 2) return
+  if (state.cursor >= state.replayEvents.length - 1) state.cursor = 0
+  state.playing = true
+  render()
+  syncDeepLink()
+  schedulePlayback()
 }
 
 function togglePlayback() {
@@ -869,16 +1232,7 @@ function togglePlayback() {
     render()
     return
   }
-  if (state.cursor >= state.replayEvents.length - 1) state.cursor = 0
-  state.playing = true
-  state.timer = setInterval(() => {
-    state.cursor++
-    if (state.cursor >= state.replayEvents.length - 1) stopPlayback()
-    render()
-    syncDeepLink()
-  }, state.mode === 'timelapse' ? 180 : 420)
-  render()
-  syncDeepLink()
+  startPlayback()
 }
 
 function connectEvents() {
@@ -891,11 +1245,20 @@ function connectEvents() {
   })
   source.addEventListener('trail', event => {
     const item = JSON.parse(event.data)
+    if (item.kind === 'session.start' && item.data?.sessionId !== state.liveModel.session?.sessionId) {
+      state.liveEvents = []
+      state.liveModel = createProjection()
+      state.sessionId = item.data.sessionId
+      state.replayEvents = []
+      state.replayIndex = null
+      resetCamera(`${state.sessionId}:live`)
+      fetchJson('/api/sessions').then(sessions => { state.sessions = sessions; scheduleRender(state.liveModel) }).catch(() => {})
+    }
     if (!state.liveEvents.some(existing => existing.seq === item.seq)) state.liveEvents.push(item)
     state.liveModel = reduceEvent(state.liveModel, item)
     if (state.mode === 'live') {
       state.cursor = state.liveEvents.length - 1
-      render(state.liveModel)
+      scheduleRender(state.liveModel)
     }
   })
   source.addEventListener('error', () => {
@@ -905,7 +1268,10 @@ function connectEvents() {
   })
 }
 
-for (const button of document.querySelectorAll('[data-mode]')) button.addEventListener('click', () => setMode(button.dataset.mode))
+for (const button of document.querySelectorAll('.mode-switch button[data-mode]')) button.addEventListener('click', event => {
+  event.stopPropagation()
+  setMode(button.dataset.mode)
+})
 for (const button of document.querySelectorAll('[data-inspector-tab]')) button.addEventListener('click', event => {
   event.preventDefault()
   event.stopPropagation()

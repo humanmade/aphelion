@@ -38,6 +38,7 @@ First event of every file is `kind: "session.start"` with `data` carrying target
 ## Rules
 
 - **Append-only.** Never rewrite a line. Corrections and late information are new events.
+- **Observer-authored only.** Aphelion's observers write events at the moment of observation. No developer, agent, or tool may append a trail event by hand; missing context requires a new observer-made observation, never a manual entry.
 - **Streamable.** Projections must be computable in one forward pass without holding the whole log in memory; replay scrubbing may build a sparse snapshot index (derived, cache, regenerable).
 - **Tolerant readers.** Skip lines that fail to parse; never abort a render over one bad line.
 - **No secrets.** Payloads carry paths, identifiers, and summaries — never credentials, tokens, or request bodies known to contain them. Site-side observers redact at the source.

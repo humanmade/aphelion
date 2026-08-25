@@ -18,6 +18,7 @@ Usage:
 Options:
   --open              Open the live board in your browser
   --port <number>     Preferred loopback port (falls forward when occupied)
+  --idle-timeout <m>  End inactive sessions after this many minutes (default: 30)
   --site <url>        Record as a site target instead of a project target
   --integrity         Add optional SHA-256 prev links to the trail
   --no-watch          Start without a repository watcher
@@ -50,6 +51,11 @@ function parseArguments(argv) {
       if (!Array.isArray(options.wpCommand) || !options.wpCommand.length || options.wpCommand.some(value => typeof value !== 'string')) throw new Error('--wp-command requires a non-empty JSON string array')
     }
     else if (argument === '--output') options.output = path.resolve(args[++index] || '')
+    else if (argument === '--idle-timeout') {
+      const value = Number(args[++index])
+      if (!Number.isFinite(value) || value <= 0) throw new Error('--idle-timeout requires a positive number of minutes')
+      options.idleTimeoutMs = value * 60_000
+    }
     else if (argument === '--port') {
       const value = Number(args[++index])
       if (!Number.isInteger(value) || value < 1 || value > 65535) throw new Error('--port requires a valid port number')

@@ -156,6 +156,9 @@ export function startSidecar(options) {
       if (!baselineWritten) {
         for (const [name, value] of Object.entries(snapshot)) previousOptions.set(name, { fingerprint: fingerprint(value) })
         emit('sidecar', 'runtime.baseline', { ...snapshotSummary(snapshot), channel: 'wp-cli', transport: options.transport || 'process' })
+        if (typeof snapshot.blogname === 'string' && snapshot.blogname.trim()) {
+          emit('sidecar', 'runtime.site.identity', { siteName: snapshot.blogname.trim(), channel: 'wp-cli', transport: options.transport || 'process' })
+        }
         baselineWritten = true
       } else {
         for (const [name, value] of Object.entries(snapshot)) {
