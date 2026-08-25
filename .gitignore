@@ -6,6 +6,7 @@ coverage/
 playwright-report/
 test-results/
 qa-artifacts/
+.impeccable/
 npm-pack-output.json
 *.tgz
 .DS_Store
@@ -13,10 +14,6 @@ npm-pack-output.json
 # Local research, planning, and review artifacts
 .firecrawl/
 graphify-out/
-knowledge/
-PRODUCT.md
-BUILD-PLAN.md
-DESIGN.md
 HYPERFRAMES.md
 QA_REPORT.md
 PRD.md
