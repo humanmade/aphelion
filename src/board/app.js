@@ -2,7 +2,7 @@ import { createProjection, reduceEvent, summarizeEvent } from '/assets/reducer.m
 import { buildReplayIndex, projectReplay } from '/assets/replay.mjs'
 import { buildSiteTopology, displayChannel, layoutSiteTopology } from '/assets/topology.mjs'
 
-// Graph layout and expandable node interaction substantially adapt sodiumsun/agenttrail (MIT, snapshot 41454d4).
+// Graph layout and node interaction substantially adapt sodiumsun/agenttrail (MIT, snapshot 41454d4).
 
 const $ = id => document.getElementById(id)
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -15,13 +15,17 @@ const state = {
   sessions: [],
   sessionId: null,
   cursor: 0,
-  selectedSeq: null,
   playing: false,
   timer: null,
   source: null,
-  openGraphNodes: new Set(),
-  focused: new URLSearchParams(location.search).get('focus') === '1',
+  expandedTails: new Set(),
+  nodePositions: new Map(),
+  inspectorSelection: null,
+  inspectorTab: 'place',
+  urlReady: false,
 }
+
+const deepLinkKeys = ['session', 'mode', 'seq', 'place', 'flow', 'tab']
 
 function node(tag, className, text) {
   const element = document.createElement(tag)
@@ -46,19 +50,9 @@ function formatDate(timestamp) {
   if (!timestamp) return 'Unknown time'
   const date = new Date(timestamp)
   const today = new Date()
-  const sameDay = date.toDateString() === today.toDateString()
-  return new Intl.DateTimeFormat([], sameDay
+  return new Intl.DateTimeFormat([], date.toDateString() === today.toDateString()
     ? { hour: '2-digit', minute: '2-digit' }
     : { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date)
-}
-
-function elapsed(start, end) {
-  const milliseconds = Math.max(0, (end || Date.now()) - (start || end || Date.now()))
-  const seconds = Math.round(milliseconds / 1000)
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ${seconds % 60}s`
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
 }
 
 function duration(milliseconds) {
@@ -68,20 +62,8 @@ function duration(milliseconds) {
   return `${Math.floor(milliseconds / 60_000)}m ${Math.round((milliseconds % 60_000) / 1000)}s`
 }
 
-function eventClass(event) {
-  if (event.kind.startsWith('presence.')) return 'presence'
-  if (event.kind.startsWith('tool.') || event.kind.includes('.call') || event.kind.endsWith('.declared') || event.kind.startsWith('plan.')) return 'declared'
-  if (event.kind.startsWith('file.') || event.kind.startsWith('wp.') || event.kind.startsWith('adapter.') || event.kind.startsWith('runtime.') || event.kind === 'repo.snapshot') return 'observed'
-  return 'record'
-}
-
 function channel(event) {
   return event.data?.channel || event.data?.transport || ({ watcher: 'repo', hook: 'agent', plan: 'plan', session: 'session', wp: 'WordPress', mcp: 'MCP', cli: 'WP-CLI' }[event.source] || event.source)
-}
-
-function eventDetail(event) {
-  const data = event.data || {}
-  return data.file || data.title || data.objectType || data.ability || data.tool || data.phase || event.kind
 }
 
 function currentEvents() {
@@ -107,13 +89,20 @@ function currentProjection() {
   return projectReplay(state.replayEvents, state.cursor, state.replayIndex)
 }
 
-function activeConnections(model) {
-  return Object.values(model.connections || {}).filter(connection => connection.active)
-}
-
-function selectedEvent() {
-  const events = currentEvents()
-  return state.selectedSeq === null ? null : events.find(event => event.seq === state.selectedSeq) || null
+function syncDeepLink() {
+  if (!state.urlReady) return
+  const url = new URL(window.location.href)
+  for (const key of deepLinkKeys) url.searchParams.delete(key)
+  if (state.mode !== 'live') {
+    if (state.sessionId) url.searchParams.set('session', state.sessionId)
+    url.searchParams.set('mode', state.mode)
+    const event = state.replayEvents[state.cursor]
+    if (event?.seq !== undefined) url.searchParams.set('seq', String(event.seq))
+  }
+  if (state.inspectorSelection?.kind === 'place') url.searchParams.set('place', state.inspectorSelection.id)
+  if (state.inspectorSelection?.kind === 'edge') url.searchParams.set('flow', state.inspectorSelection.id)
+  if (state.inspectorSelection && state.inspectorTab === 'trail') url.searchParams.set('tab', 'trail')
+  window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
 }
 
 function setText(id, value) {
@@ -129,40 +118,44 @@ function toast(message) {
 }
 
 function renderHeader(model) {
-  const target = model.session?.target || model.daemon?.target || 'Local WordPress project'
-  const targetName = target.includes('://') ? new URL(target).host : target.split(/[\\/]/).filter(Boolean).at(-1) || target
-  setText('target-name', targetName)
-  setText('target-path', target)
   const signal = $('live-signal')
   const live = state.mode === 'live' && model.status === 'live'
   signal.dataset.status = live ? 'live' : state.mode === 'live' ? 'offline' : 'replay'
-  signal.querySelector('span').textContent = live ? 'Recording live' : state.mode === 'live' ? 'Recorded' : state.mode === 'replay' ? 'Replaying' : 'Rendering path'
+  signal.querySelector('span').textContent = live ? 'Live' : state.mode === 'live' ? 'Recorded' : state.mode === 'replay' ? 'Replay' : 'Timelapse'
 }
 
 function renderSessions(model) {
-  setText('session-count', String(state.sessions.length))
-  const list = $('session-list')
-  const items = state.sessions.map(session => {
+  const select = $('session-select')
+  const currentSessionId = state.liveModel.daemon?.sessionId || state.liveModel.session?.sessionId
+  const options = state.sessions.map(session => {
     const start = session.start?.data || {}
-    const currentSessionId = state.liveModel.daemon?.sessionId || state.liveModel.session?.sessionId
-    const button = node('button', 'session-item')
-    button.type = 'button'
-    button.dataset.live = String(session.id === currentSessionId && state.liveModel.status === 'live')
-    button.setAttribute('aria-current', String(session.id === state.sessionId))
-    const copy = node('span', 'session-copy')
-    copy.append(node('strong', '', session.id === currentSessionId ? 'Current recording' : formatDate(session.start?.ts)))
-    copy.append(node('span', '', `${start.agent || 'Observed session'} · ${Math.max(1, Math.round(session.size / 1024))} KB`))
-    button.append(copy)
-    button.addEventListener('click', () => selectSession(session.id))
-    return button
+    const target = start.siteName || start.targetName || start.target || start.agent || 'recorded session'
+    const option = node('option', '', session.id === currentSessionId ? `Live · ${target}` : `${formatDate(session.start?.ts)} · ${target}`)
+    option.value = session.id
+    return option
   })
-  if (!items.length) {
-    const empty = node('p', 'panel-empty', 'The first path will appear as soon as an event is recorded.')
-    list.replaceChildren(empty)
-  } else list.replaceChildren(...items)
+  if (!options.length) {
+    const option = node('option', '', 'Waiting for first session')
+    option.value = ''
+    select.replaceChildren(option)
+    select.disabled = true
+    return
+  }
+  select.disabled = false
+  select.replaceChildren(...options)
+  select.value = state.sessionId || model.daemon?.sessionId || options[0].value
 }
 
-function renderOrbit(model) {
+function playbackCaption(model, topology, current) {
+  if (topology?.focus?.place && topology?.focus?.edge) {
+    const actor = topology.focus.edge.actor || topology.focus.change.actor || 'Agent'
+    return `${actor} · ${displayChannel(topology.focus.edge.channel)} → ${topology.focus.place.title}`
+  }
+  if (current) return current.summary || summarizeEvent(current)
+  return model.status === 'ended' ? 'Session ended' : 'Waiting for evidence'
+}
+
+function renderOrbit(model, topology) {
   const events = currentEvents()
   const max = Math.max(0, events.length - 1)
   const cursor = state.mode === 'live' ? max : Math.min(state.cursor, max)
@@ -172,100 +165,199 @@ function renderOrbit(model) {
   scrubber.disabled = state.mode === 'live' || max === 0
   $('playback').disabled = state.mode === 'live' || max === 0
   $('playback').dataset.playing = String(state.playing)
-  $('playback').querySelector('span').textContent = state.playing ? 'Pause trail' : state.mode === 'timelapse' ? 'Play timelapse' : 'Play trail'
+  $('playback').setAttribute('aria-label', state.playing ? 'Pause trail' : state.mode === 'timelapse' ? 'Play timelapse' : 'Play trail')
   const current = events[cursor]
-  const first = events[0]
-  setText('playback-time', current ? `${formatClock(current.ts)} · ${elapsed(first?.ts, current.ts)}` : 'Waiting for evidence')
-  setText('event-position', `${events.length ? cursor + 1 : 0} / ${events.length} events`)
+  setText('event-position', `${events.length ? cursor + 1 : 0} / ${events.length}`)
+  setText('playback-caption', current ? `${formatClock(current.ts)} · ${playbackCaption(model, topology, current)}` : playbackCaption(model, topology, current))
 }
 
-function renderBrief(model, topology) {
-  const focus = topology?.focus
-  if (focus?.place && focus?.change && focus?.edge) {
-    const actorName = focus.edge.actor || focus.change.actor
-    const subject = actorName || 'Unattributed work'
-    setText('brief-title', `${subject} via ${displayChannel(focus.edge.channel)} is changing ${focus.place.title}`)
-    setText('brief-detail', focus.change.confirmation
-      ? `Confirmed by WordPress: ${focus.change.confirmation.summary}${focus.change.claim ? ` · Claim: ${focus.change.claim.summary}` : ' · No matching claim was recorded.'}`
-      : `Claimed: ${focus.change.claim?.summary || focus.change.verb}. Waiting for independent WordPress confirmation.`)
-    setText('declared-count', String(model.counts?.declared || 0))
-    setText('observed-count', String(model.counts?.observed || 0))
-    setText('connection-count', String(activeConnections(model).length))
-    return
+function titleCase(value) {
+  return String(value || '').replace(/([a-z])([A-Z])/g, '$1 $2').replaceAll('_', ' ').replaceAll('-', ' ').replace(/^./, character => character.toUpperCase())
+}
+
+function placeType(item) {
+  if (item.kind === 'site') return 'Site'
+  if (item.kind === 'component') return 'Component'
+  if (item.kind === 'declaration') return 'WordPress'
+  if (item.entityType === 'option') return 'Setting'
+  return titleCase(item.entityType || item.kind)
+}
+
+function placeIcon(type) {
+  const icon = svgNode('svg', { class: 'place-icon', viewBox: '0 0 24 24', 'aria-hidden': true })
+  const paths = type === 'Site'
+    ? ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M3 12h18', 'M12 3a14 14 0 0 1 0 18', 'M12 3a14 14 0 0 0 0 18']
+    : type === 'Setting'
+      ? ['M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z', 'M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V20.3h-3v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 0 0 7.08 15a1.7 1.7 0 0 0-1.55-1H5.4v-3h.13a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.12-2.12.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1-1.55V4.7h3v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.12 2.12-.06.06A1.7 1.7 0 0 0 19.4 10a1.7 1.7 0 0 0 1.55 1h.13v3h-.13a1.7 1.7 0 0 0-1.55 1Z']
+      : type === 'Plugin'
+        ? ['M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z']
+        : type === 'Ability'
+          ? ['m13 2-9 12h8l-1 8 9-12h-8z']
+          : ['M6 3h9l4 4v14H6z', 'M14 3v5h5', 'M9 13h6M9 17h6']
+  for (const d of paths) icon.append(svgNode('path', { d }))
+  return icon
+}
+
+function changeKey(change) {
+  return change.confirmation?.kind || (change.status === 'in-flight' ? 'in-flight' : change.verb || 'change')
+}
+
+function canCollapse(left, right) {
+  if (changeKey(left) !== changeKey(right)) return false
+  if (left.claim || right.claim) return left.requestId && left.requestId === right.requestId
+  return left.requestId === right.requestId || (!left.requestId && !right.requestId)
+}
+
+function collapseChanges(changes = []) {
+  const groups = []
+  for (const change of changes) {
+    const previous = groups.at(-1)
+    if (previous && canCollapse(previous.at(-1), change)) previous.push(change)
+    else groups.push([change])
   }
-  const latestChange = topology?.changes?.at(-1)
-  if (latestChange) {
-    setText('brief-title', `${latestChange.verb} ${latestChange.placeTitle}`)
-    setText('brief-detail', latestChange.confirmation
-      ? `${displayChannel(latestChange.channel)} delivered a WordPress-confirmed change. Open the place history to compare its claim and confirmation.`
-      : `${displayChannel(latestChange.channel)} recorded a claim without a WordPress confirmation.`)
-    setText('declared-count', String(model.counts?.declared || 0))
-    setText('observed-count', String(model.counts?.observed || 0))
-    setText('connection-count', String(activeConnections(model).length))
-    return
+  return groups.map(group => changeRow(group)).reverse()
+}
+
+function timeRange(group) {
+  const first = formatClock(group[0].ts)
+  const last = formatClock(group.at(-1).ts)
+  if (group.length === 1 || first === last) return last
+  if (first.slice(0, 5) === last.slice(0, 5)) return `${first}–${last.slice(-2)}`
+  return `${first.slice(0, 5)}–${last.slice(0, 5)}`
+}
+
+const actionForms = {
+  update: ['Updated', 'Updating'],
+  edit: ['Edited', 'Editing'],
+  restore: ['Restored', 'Restoring'],
+  inspect: ['Inspected', 'Inspecting'],
+  create: ['Created', 'Creating'],
+  delete: ['Deleted', 'Deleting'],
+  trash: ['Trashed', 'Trashing'],
+  change: ['Changed', 'Changing'],
+  set: ['Set', 'Setting'],
+}
+
+function actionPhrase(summary, tense = 'past') {
+  const words = String(summary || '').trim().split(/\s+/).filter(Boolean)
+  const actionIndex = words.findIndex(word => actionForms[word.toLowerCase().replace(/[^a-z]/g, '')])
+  if (actionIndex < 0) return null
+  const action = words[actionIndex].toLowerCase().replace(/[^a-z]/g, '')
+  const modifiers = words.slice(0, actionIndex).filter(word => /ly$/i.test(word))
+  const subject = words.slice(actionIndex + 1).join(' ').replace(/^(?:the|a|an)\s+/i, '').replace(/[.!]+$/, '')
+  const form = actionForms[action][tense === 'progressive' ? 1 : 0]
+  return [form, subject, ...modifiers.map(word => word.toLowerCase())].filter(Boolean).join(' ')
+}
+
+function cardPhrase(change, awaiting) {
+  if (change.claim?.summary) {
+    const phrase = actionPhrase(change.claim.summary, awaiting ? 'progressive' : 'past')
+    if (phrase) return awaiting ? `${phrase}…` : phrase
   }
-  const latest = model.recent?.find(event => !event.kind.startsWith('presence.') || /(?:error|timeout|disconnect)$/.test(event.kind))
-  setText('brief-title', latest?.summary || (model.status === 'ended' ? 'This recorded path is ready to replay' : 'Waiting for the first recorded action'))
-  const detail = latest
-    ? latest.kind.startsWith('presence.')
-      ? 'Connection state is evidence too. The channel remains distinct from the work it may perform.'
-      : latest.kind.startsWith('wp.')
-        ? 'WordPress reported this effect independently of the agent’s declared intent.'
-        : latest.kind.startsWith('tool.') || latest.kind.includes('.call')
-          ? 'This is what the agent declared or requested. Observed effects remain separate below.'
-          : 'This event is preserved in the trail and will render identically in replay and timelapse.'
-    : 'Aphelion is ready. Agent intent and observed WordPress changes will appear here as separate evidence.'
-  setText('brief-detail', detail)
-  setText('declared-count', String(model.counts?.declared || 0))
-  setText('observed-count', String(model.counts?.observed || 0))
-  setText('connection-count', String(activeConnections(model).length))
+  if (awaiting) return change.verb?.endsWith('…') ? change.verb : `${change.verb || 'Changing'}…`
+  return change.verb || 'Changed'
+}
+
+function phraseParts(phrase, runLead = null) {
+  if (runLead) return { lead: runLead, rest: phrase.slice(runLead.length).trim() }
+  const [lead, ...rest] = String(phrase).split(/\s+/)
+  return { lead, rest: rest.join(' ') }
+}
+
+function changeRow(group) {
+  const latest = group.at(-1)
+  const failed = ['failed', 'refuted'].includes(latest.status)
+  const awaiting = latest.status === 'in-flight'
+  const unconfirmed = latest.status === 'unconfirmed'
+  if (group.length > 1) {
+    const kind = changeKey(latest)
+    const noun = kind.includes('post_meta') ? 'metadata changes' : kind.includes('post.updated') ? 'block edits' : `${titleCase(kind.split('.').at(-1))} changes`.toLowerCase()
+    const lead = `${group.length} ${noun}`
+    return { lead, rest: '', time: timeRange(group), status: failed ? 'failed' : awaiting ? 'awaiting' : unconfirmed ? 'unconfirmed' : 'confirmed', changes: group }
+  }
+  const phrase = cardPhrase(latest, awaiting)
+  return { ...phraseParts(phrase), time: awaiting ? '' : formatClock(latest.ts), status: failed ? 'failed' : awaiting ? 'awaiting' : unconfirmed ? 'unconfirmed' : 'confirmed', changes: group }
+}
+
+function cardBookkeeping(change) {
+  const metaKey = change.state?.metaKey || change.confirmation?.state?.metaKey
+  return /^_?wp_trash_meta(?:_|$)/i.test(String(metaKey || ''))
+}
+
+function cardRows(item) {
+  if (item.changes?.length) return collapseChanges(item.changes.filter(change => !cardBookkeeping(change)))
+  return item.rows || []
+}
+
+function cardStateLine(item) {
+  const stateLine = String(item.stateLine || item.meta || '').trim()
+  if (!stateLine || stateLine === 'No state recorded' || item.future) return ''
+  const genericName = /^(?:Content|Page|Post) #\d+$/.test(String(item.title || ''))
+  const placeholder = stateLine.toLowerCase() === placeType(item).toLowerCase()
+  return genericName && placeholder ? '' : stateLine
+}
+
+function cardHeight(item) {
+  const rows = cardRows(item)
+  const base = 30 + (cardStateLine(item) ? 74 : 52)
+  if (!rows.length) return base
+  const expanded = state.expandedTails.has(item.id)
+  const visibleRows = expanded ? Math.min(rows.length, 8) : Math.min(rows.length, 3)
+  const affordance = rows.length > 3 ? 29 : 0
+  return base + visibleRows * 29 + affordance
+}
+
+function changeRowElement(row) {
+  const element = node('div', `change-row ${row.status === 'confirmed' ? '' : row.status}`.trim())
+  const copy = node('span', 'change-copy')
+  copy.append(node('strong', '', row.lead))
+  if (row.rest) copy.append(document.createTextNode(` ${row.rest}`))
+  const meta = node('span', 'change-meta')
+  if (row.status !== 'confirmed') meta.append(node('span', `change-flag ${row.status}`, row.status))
+  if (row.time) meta.append(node('time', '', row.time))
+  element.append(copy, meta)
+  return element
+}
+
+function placeCard(item, height, model) {
+  const type = placeType(item)
+  const card = node('div', 'place-card')
+  const band = node('div', 'place-band')
+  band.append(placeIcon(type), node('span', 'place-type', type), node('span', 'place-address', item.address || item.identity || item.id), node('i', 'place-dot'))
+  const stateLine = cardStateLine(item)
+  const identity = node('div', `place-identity${stateLine ? '' : ' without-state'}`)
+  identity.append(node('strong', 'place-name', item.title))
+  if (stateLine) identity.append(node('div', 'place-state', stateLine))
+  const tail = node('div', 'change-tail')
+  const rows = cardRows(item)
+  const expanded = state.expandedTails.has(item.id)
+  tail.dataset.expanded = String(expanded)
+  const visible = expanded ? rows : rows.slice(0, 3)
+  for (const row of visible) tail.append(changeRowElement(row))
+  if (rows.length > 3) {
+    const toggle = node('button', 'tail-more', expanded ? 'Show latest' : `+${rows.length - 3} earlier`)
+    toggle.type = 'button'
+    toggle.setAttribute('aria-label', expanded ? `Collapse changes for ${item.title}` : `Show ${rows.length - 3} earlier changes for ${item.title}`)
+    toggle.addEventListener('click', event => {
+      event.stopPropagation()
+      expanded ? state.expandedTails.delete(item.id) : state.expandedTails.add(item.id)
+      render(model)
+    })
+    tail.append(toggle)
+  }
+  card.append(band, identity)
+  if (rows.length) card.append(tail)
+  card.style.height = `${height}px`
+  return card
 }
 
 function renderComponents(model, topology = currentTopology(model)) {
+  const flow = $('component-flow')
   const plannedComponents = (model.plan?.nodes || []).filter(item => item.level === 'component')
   const declarations = model.repository?.declarations || []
-  // WordPress actions are the work in a site session. PLAN.md remains trail
-  // evidence, but it must never displace the durable site map from top-left.
   const components = topology.nodes.length ? [] : plannedComponents
-  const visibleEntities = topology.nodes.filter(item => !item.future)
-  const entitySummary = topology.nodes.length ? `${visibleEntities.length}/${topology.nodes.length} ${topology.nodes.length === 1 ? 'place' : 'places'} · ${topology.changes.length} ${topology.changes.length === 1 ? 'change' : 'changes'}` : ''
-  const completed = components.filter(item => item.status === 'done').length
-  const planSummary = components.length ? `${completed}/${components.length} components` : ''
-  setText('map-summary', [entitySummary, planSummary].filter(Boolean).join(' · '))
-  const flow = $('component-flow')
-  flow.style.removeProperty('height')
-  flow.style.removeProperty('--expanded-height')
-  flow.dataset.expanded = String(state.openGraphNodes.size > 0)
-  document.querySelector('.app-shell').dataset.graphExpanded = String(state.openGraphNodes.size > 0)
-  const compact = window.innerWidth <= 680
   const graphNodes = []
   const graphEdges = []
-  const scalar = value => Array.isArray(value) ? value.join(' · ') : value && typeof value === 'object' ? JSON.stringify(value) : String(value ?? '')
-  const label = value => String(value).replace(/([a-z])([A-Z])/g, '$1 $2').replaceAll('_', ' ').replace(/^./, character => character.toUpperCase())
-  const changeProperties = change => [
-    { label: 'Claim', value: change.claim?.summary || 'No declared claim recorded' },
-    { label: 'Confirmation', value: change.confirmation?.summary || 'No WordPress confirmation recorded' },
-  ].filter(Boolean)
-  const changeRow = change => ({
-    title: change.verb,
-    status: change.status === 'confirmed' ? 'done' : change.status === 'in-flight' ? 'active' : 'blocked',
-    meta: `${formatClock(change.ts)} · ${displayChannel(change.channel)} · ${change.status}`,
-    properties: changeProperties(change),
-    seq: change.seq,
-  })
-  const lastChangeLine = change => change
-    ? `${change.verb} · ${change.status === 'in-flight' ? 'claimed via' : 'via'} ${displayChannel(change.channel)} · ${formatClock(change.ts)}`
-    : 'No changes recorded'
-  const taskRows = component => model.plan.nodes.filter(candidate => candidate.parent === component.id).map(task => ({
-    title: task.title,
-    status: task.status,
-    meta: task.status === 'active' ? 'Editing now' : task.status === 'done' ? 'Completed' : task.status === 'blocked' ? 'Blocked' : 'Planned',
-    properties: [
-      task.tech ? { label: 'Technical', value: task.tech } : null,
-      task.by ? { label: 'Agent', value: task.by } : null,
-      { label: 'Stable ID', value: task.id },
-    ].filter(Boolean),
-  }))
 
   if (components.length) {
     const byId = Object.fromEntries(components.map(component => [component.id, component]))
@@ -281,15 +373,11 @@ function renderComponents(model, topology = currentTopology(model)) {
     }
     components.forEach(getDepth)
     for (const component of components) {
-      const rows = taskRows(component), done = rows.filter(row => row.status === 'done').length
-      graphNodes.push({ id: component.id, depth: getDepth(component), group: 'plan', kind: 'component', kicker: component.tech || `Component · ${component.id}`, title: component.title, meta: `${done} of ${rows.length} tasks · ${component.status}`, status: component.status, progress: rows.length ? done / rows.length : 0, rows })
+      const tasks = model.plan.nodes.filter(candidate => candidate.parent === component.id)
+      const done = tasks.filter(task => task.status === 'done').length
+      graphNodes.push({ id: component.id, depth: getDepth(component), group: 'plan', kind: 'component', address: component.id, title: component.title, stateLine: `${done} of ${tasks.length} tasks · ${component.status}`, status: component.status, rows: tasks.slice().reverse().map(task => ({ lead: task.status === 'done' ? 'Completed' : task.status === 'active' ? 'Working' : 'Planned', rest: task.title, time: '', status: task.status === 'blocked' ? 'failed' : task.status === 'active' ? 'awaiting' : 'confirmed' })) })
     }
     for (const component of components) for (const need of component.needs || []) if (byId[need]) graphEdges.push({ from: need, to: component.id, kind: 'dependency' })
-    const links = new Set()
-    for (const component of components) for (const linked of component.links || []) if (byId[linked]) {
-      const key = [component.id, linked].sort().join('|')
-      if (!links.has(key)) { links.add(key); graphEdges.push({ from: component.id, to: linked, kind: 'link' }) }
-    }
   }
 
   if (topology.nodes.length) {
@@ -297,136 +385,92 @@ function renderComponents(model, topology = currentTopology(model)) {
       id: topology.root.id,
       group: 'site',
       kind: 'site',
-      kicker: `Site · ${topology.root.identity}`,
+      address: topology.root.identity,
+      identity: topology.root.identity,
       title: topology.root.title,
       stateLine: topology.root.stateLine,
-      lastChangeLine: lastChangeLine(topology.root.lastChange),
-      historyLabel: `${topology.root.changes.length} ${topology.root.changes.length === 1 ? 'change' : 'changes'} · open history`,
-      status: topology.root.active ? 'active' : 'done',
+      // The site root summarizes territory; repeating every child change here
+      // would make one action appear twice on the same map.
+      changes: [],
       flowState: topology.root.flowState,
-      progress: 1,
-      rows: [...topology.root.changes].reverse().map(changeRow),
+      current: topology.root.current,
       topologyRoot: true,
     })
-
-    for (const entity of topology.nodes) {
-      const typeLabel = entity.type === 'option' ? 'Setting' : entity.type === 'content' ? 'Content' : label(entity.type)
-      const status = entity.future ? 'pending' : entity.active ? 'active' : entity.observedCount ? 'done' : 'pending'
-      const historyRows = [...entity.changes].reverse().map(changeRow)
-      graphNodes.push({
-        id: entity.id,
-        group: 'site',
-        kind: 'entity',
-        entityType: entity.type,
-        future: entity.future,
-        kicker: `${typeLabel} · ${entity.identity}`,
-        title: entity.title,
-        stateLine: entity.future ? 'Not reached yet' : entity.stateLine,
-        lastChangeLine: entity.future ? 'No changes recorded' : lastChangeLine(entity.lastChange),
-        historyLabel: `${entity.changes.length} ${entity.changes.length === 1 ? 'change' : 'changes'} · open history`,
-        status,
-        flowState: entity.flowState,
-        progress: status === 'done' ? 1 : status === 'active' ? .5 : 0,
-        seq: entity.lastSeq,
-        rows: historyRows,
-        current: entity.current,
-        topologyOrder: entity.order,
-      })
-    }
-
+    for (const entity of topology.nodes) graphNodes.push({
+      id: entity.id,
+      group: 'site',
+      kind: 'entity',
+      entityType: entity.type,
+      address: entity.identity,
+      identity: entity.identity,
+      title: entity.title,
+      stateLine: entity.future ? 'Not reached yet' : entity.stateLine,
+      changes: entity.changes,
+      future: entity.future,
+      flowState: entity.flowState,
+      current: entity.current,
+      seq: entity.lastSeq,
+      topologyOrder: entity.order,
+    })
     const futureIds = new Set(topology.nodes.filter(entity => entity.future).map(entity => entity.id))
     for (const edge of topology.edges) graphEdges.push({
-      id: edge.id,
-      from: edge.from,
-      to: edge.to,
+      ...edge,
       kind: 'channel',
       label: displayChannel(edge.channel),
       claim: topology.focus?.edge.id === edge.id && !topology.focus.change.confirmation ? topology.focus.change.claim?.summary : null,
-      active: edge.active,
-      flowState: edge.flowState,
-      current: edge.current,
       future: edge.future || (futureIds.has(edge.to) && edge.flowState === 'idle'),
       duration: edge.durationMs,
     })
   }
 
   if (!graphNodes.length && declarations.length) declarations.slice(0, 8).forEach((declaration, index) => graphNodes.push({
-    id: `declaration-${index}`, depth: index, group: 'plan', kind: 'declaration', kicker: `WordPress · ${declaration.type.replaceAll('-', ' ')}`, title: declaration.title || declaration.name,
-    meta: declaration.type.replaceAll('-', ' '), status: 'pending', progress: 0,
-    rows: [{ title: declaration.name || declaration.title, status: 'pending', meta: declaration.type, properties: Object.entries(declaration).filter(([key]) => !['title', 'name', 'type'].includes(key)).map(([key, value]) => ({ label: label(key), value: scalar(value) })) }],
+    id: `declaration-${index}`, depth: index, group: 'plan', kind: 'declaration', address: declaration.type, title: declaration.title || declaration.name, stateLine: declaration.type.replaceAll('-', ' '), rows: [],
   }))
 
   if (!graphNodes.length) {
-    const empty = node('div', 'empty-ledger')
-    empty.append(node('strong', '', 'The site map will grow from the first durable object.'), node('span', '', 'Actions resolve onto WordPress content, settings, plugins, and abilities. Connection lifecycle stays on the edges.'))
+    const empty = node('div', 'empty-board')
+    empty.append(node('p', '', 'The map grows when the first durable place is touched.'), node('p', '', 'No account, no telemetry, nothing leaves this machine.'))
     flow.replaceChildren(empty)
     return
   }
 
-  // AgentTrail assigns durable components a stable position and updates their
-  // activity in place. Site entities keep that same spatial contract.
-  const flowWidth = Math.max(320, flow.clientWidth || (compact ? 358 : 760))
-  const nodeW = compact ? Math.min(320, Math.max(280, flowWidth - 48)) : state.focused ? 360 : Math.min(340, Math.max(280, Math.round(flowWidth * .46)))
-  const nodeH = 176
+  const compact = window.innerWidth <= 680
+  const flowWidth = Math.max(320, flow.clientWidth || 1440)
+  const flowHeight = Math.max(360, flow.clientHeight || window.innerHeight - 48)
+  const nodeW = compact ? Math.min(320, Math.max(280, flowWidth - 48)) : 320
+  const layoutNodeH = 238
   const gapX = compact ? 38 : 112
-  const gapY = compact ? 28 : 40
-  const padX = compact ? 24 : 52
-  const padY = compact ? 132 : 80
-  const detailHeight = item => Math.min(680, Math.max(84, 16 + item.rows.reduce((height, row) => height + 48 + Math.min(12, row.properties.length) * 22, 0)))
-  const metrics = Object.fromEntries(graphNodes.map(item => {
-    const open = state.openGraphNodes.has(item.id), detailH = open ? detailHeight(item) : 0
-    return [item.id, { w: nodeW, nodeW, nodeH, detailH, h: nodeH + (open ? 24 + detailH : 0) }]
-  }))
+  const gapY = compact ? 28 : 38
+  const padX = compact ? 24 : 42
+  const padY = compact ? 56 : 44
+  const metrics = Object.fromEntries(graphNodes.map(item => [item.id, { w: nodeW, h: cardHeight(item) }]))
   const planNodes = graphNodes.filter(item => item.group === 'plan')
   const siteNodes = graphNodes.filter(item => item.group === 'site')
-  const layoutGroup = (items, offsetY = padY) => {
-    if (!items.length) return { bottom: offsetY, right: padX }
-    if (compact) {
-      let y = offsetY, right = padX
-      for (const item of items) { Object.assign(item, { x: padX, y }); y += metrics[item.id].h + gapY; right = Math.max(right, padX + nodeW) }
-      return { bottom: y - gapY + padY, right: right + padX }
-    }
+
+  const layoutPlan = items => {
     const columns = {}
-    for (const item of items) (columns[item.depth] ??= []).push(item)
-    const ordered = Object.keys(columns).map(Number).sort((a, b) => a - b)
-    let x = padX, bottom = offsetY, right = padX
-    for (const column of ordered) {
-      let y = offsetY
-      for (const item of columns[column]) { Object.assign(item, { x, y }); y += metrics[item.id].h + gapY }
-      bottom = Math.max(bottom, y - gapY + padY); right = x + nodeW + padX; x += nodeW + gapX
-    }
-    return { bottom, right }
+    for (const item of items) (columns[item.depth || 0] ??= []).push(item)
+    for (const [column, entries] of Object.entries(columns)) entries.forEach((item, row) => Object.assign(item, { x: padX + Number(column) * (nodeW + gapX), y: padY + row * (layoutNodeH + gapY) }))
   }
-  const planLayout = layoutGroup(planNodes)
+  layoutPlan(planNodes)
   if (siteNodes.length) {
-    const siteOffsetY = planNodes.length ? planLayout.bottom + 72 : padY
-    const siteLayout = layoutSiteTopology(topology, { compact, nodeW, nodeH, gapX, gapY, padX, padY: siteOffsetY })
+    const siteLayout = layoutSiteTopology(topology, { compact, nodeW, nodeH: layoutNodeH, gapX, gapY, padX, padY })
     const positions = new Map(siteLayout.nodes.map(item => [item.id, item]))
     const columnShift = new Map()
     for (const item of siteNodes) {
-      const position = positions.get(item.id)
-      if (!position) continue
+      const position = positions.get(item.id) || { x: padX, y: padY, depth: 0 }
       const shift = columnShift.get(position.depth) || 0
       Object.assign(item, { x: position.x, y: position.y + shift, depth: position.depth })
-      if (state.openGraphNodes.has(item.id)) columnShift.set(position.depth, shift + metrics[item.id].detailH + 24)
+      columnShift.set(position.depth, shift + Math.max(0, metrics[item.id].h - layoutNodeH))
     }
   }
-  const graphBottom = Math.max(padY, ...graphNodes.map(item => item.y + metrics[item.id].h + padY))
-  const graphRight = Math.max(padX, ...graphNodes.map(item => item.x + nodeW + padX))
-  const fitScale = Math.min(1, flowWidth / graphRight)
-  const desiredHeight = graphBottom * fitScale + 48
-  const minHeight = compact ? 520 : 360
-  // Expanded AgentTrail-style detail cards are part of the work surface, not
-  // a tooltip. Give them room to grow before SVG has to scale the type down;
-  // collapsed maps retain the compact first-viewport bounds.
-  const maxHeight = state.openGraphNodes.size ? (compact ? 1800 : 1400) : (compact ? 720 : 620)
-  const renderedFlowHeight = Math.round(Math.max(minHeight, Math.min(maxHeight, desiredHeight)))
-  flow.style.height = `${renderedFlowHeight}px`
-  if (state.openGraphNodes.size) flow.style.setProperty('--expanded-height', `${renderedFlowHeight}px`)
+
+  const graphRight = Math.max(flowWidth, ...graphNodes.map(item => item.x + nodeW + padX))
+  const graphBottom = Math.max(flowHeight, ...graphNodes.map(item => item.y + metrics[item.id].h + padY))
   const byGraphId = Object.fromEntries(graphNodes.map(item => [item.id, item]))
   const shell = node('div', 'graph-shell')
   const svg = svgNode('svg', { class: 'work-graph', role: 'img', preserveAspectRatio: 'xMinYMin meet', 'aria-labelledby': 'graph-title graph-description' })
-  svg.append(svgNode('title', { id: 'graph-title' }, 'Stable WordPress agent-work topology'), svgNode('desc', { id: 'graph-description' }, 'The map starts at the top left. Durable WordPress objects retain their positions while declared actions, observed effects, and connection state update them over trail time.'))
+  svg.append(svgNode('title', { id: 'graph-title' }, 'WordPress agent work map'), svgNode('desc', { id: 'graph-description' }, 'Durable WordPress places stay at fixed top-left positions while recorded work travels over labeled flows.'))
   const defs = svgNode('defs')
   const pattern = svgNode('pattern', { id: 'graph-grid', width: 24, height: 24, patternUnits: 'userSpaceOnUse' })
   pattern.append(svgNode('circle', { cx: 1, cy: 1, r: 1, class: 'graph-grid-dot' }))
@@ -435,138 +479,92 @@ function renderComponents(model, topology = currentTopology(model)) {
   defs.append(pattern, marker)
   svg.append(defs, svgNode('rect', { width: '100%', height: '100%', class: 'graph-grid-fill' }))
   const world = svgNode('g', { class: 'graph-world' })
+
   const edgeGroups = new Map()
-  for (const edge of graphEdges) {
-    const list = edgeGroups.get(edge.to) || []
-    list.push(edge)
-    edgeGroups.set(edge.to, list)
-  }
+  for (const edge of graphEdges) (edgeGroups.get(edge.to) || edgeGroups.set(edge.to, []).get(edge.to)).push(edge)
   for (const list of edgeGroups.values()) list.forEach((edge, index) => { edge.laneOffset = (index - (list.length - 1) / 2) * 12 })
   const edgePath = (from, to, edge) => {
-    const laneOffset = edge?.laneOffset || 0
+    const lane = edge.laneOffset || 0
     const vertical = Math.abs(from.x - to.x) < 30 || compact
     if (vertical) {
-      const x1 = from.x + nodeW / 2 + laneOffset, y1 = from.y + nodeH, x2 = to.x + nodeW / 2 + laneOffset, y2 = to.y
+      const x1 = from.x + nodeW / 2 + lane, y1 = from.y + metrics[from.id].h, x2 = to.x + nodeW / 2 + lane, y2 = to.y
       const bend = Math.max(38, Math.abs(y2 - y1) / 2)
       return `M${x1} ${y1}C${x1} ${y1 + bend} ${x2} ${y2 - bend} ${x2} ${y2}`
     }
     const forward = to.x >= from.x
-    const x1 = from.x + (forward ? nodeW : 0), y1 = from.y + nodeH / 2 + laneOffset, x2 = to.x + (forward ? 0 : nodeW), y2 = to.y + nodeH / 2 + laneOffset
+    const x1 = from.x + (forward ? nodeW : 0), y1 = from.y + 15 + lane, x2 = to.x + (forward ? 0 : nodeW), y2 = to.y + 15 + lane
     const bend = Math.max(44, Math.abs(x2 - x1) / 2)
     return `M${x1} ${y1}C${x1 + (forward ? bend : -bend)} ${y1} ${x2 + (forward ? -bend : bend)} ${y2} ${x2} ${y2}`
   }
+
+  const labelStacks = new Map()
   for (const edge of graphEdges) {
     const from = byGraphId[edge.from], to = byGraphId[edge.to]
     if (!from || !to) continue
     const pathData = edgePath(from, to, edge)
-    world.append(svgNode('path', { d: pathData, class: `graph-edge ${edge.kind}${edge.flowState ? ` ${edge.flowState}` : ''}${edge.active ? ' active' : ''}${edge.future ? ' future' : ''}`, 'data-edge-id': edge.id, 'data-flow-state': edge.flowState, 'data-from': edge.from, 'data-to': edge.to, style: edge.active ? `--flow-duration:${edge.duration}ms` : null, 'aria-hidden': edge.future ? true : null, 'marker-end': edge.kind === 'link' || edge.future ? null : 'url(#graph-arrow)' }))
+    const pathClass = `graph-edge ${edge.kind}${edge.flowState ? ` ${edge.flowState}` : ''}${edge.active ? ' active' : ''}${edge.future ? ' future' : ''}`
+    world.append(svgNode('path', { d: pathData, class: pathClass, 'data-edge-id': edge.id, 'data-flow-state': edge.flowState, 'data-from': edge.from, 'data-to': edge.to, style: edge.active ? `--flow-duration:${edge.duration}ms` : null, 'aria-hidden': edge.future ? true : null, 'marker-end': edge.kind === 'link' || edge.future ? null : 'url(#graph-arrow)' }))
+    if (!edge.future) {
+      const hit = svgNode('path', { d: pathData, class: 'graph-edge-hit', tabindex: 0, role: 'button', 'aria-label': `Inspect ${edge.label || edge.kind} flow`, 'data-edge-id': edge.id })
+      const select = event => { event.stopPropagation(); openInspector({ kind: 'edge', id: edge.id }, model, topology) }
+      hit.addEventListener('click', select)
+      hit.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(event) } })
+      world.append(hit)
+    }
     if (edge.label && !edge.future) {
+      const labelX = vertical ? to.x + nodeW / 2 + edge.laneOffset : (from.x + nodeW + to.x) / 2
+      const labelYBase = vertical ? to.y - 12 : to.y - 10
+      const labelKey = `${Math.round(labelX / 48)}:${Math.round(labelYBase / 24)}`
+      const stacked = labelStacks.get(labelKey) || 0
+      labelStacks.set(labelKey, stacked + 1)
       const vertical = Math.abs(from.x - to.x) < 30 || compact
-      const sameRow = !vertical && Math.abs(from.y - to.y) < 30
-      world.append(svgNode('text', {
-        class: `graph-edge-label${edge.active ? ' active' : ''}`,
-        x: vertical ? to.x + nodeW / 2 + edge.laneOffset : sameRow ? (from.x + nodeW + to.x) / 2 : to.x - 14,
-        y: vertical ? to.y - 12 : sameRow ? to.y - 12 : to.y + nodeH / 2 + edge.laneOffset - 9,
-        'text-anchor': vertical || sameRow ? 'middle' : 'end',
-      }, edge.label.slice(0, 44)))
+      world.append(svgNode('text', { class: `graph-edge-label${edge.active ? ' active' : ''}`, x: labelX, y: labelYBase - stacked * 13, 'text-anchor': 'middle' }, edge.label.slice(0, 30)))
     }
-    if (edge.claim && !edge.future) {
-      world.append(svgNode('text', {
-        class: 'graph-flow-claim',
-        x: to.x + 16,
-        y: to.y + nodeH / 2 - 18,
-      }, `Claim · ${edge.claim.length > 48 ? `${edge.claim.slice(0, 47)}…` : edge.claim}`))
-    }
-    if (edge.active) {
-      const particle = svgNode('circle', { r: 5, class: 'energy-particle', 'data-edge-id': edge.id, 'data-duration': edge.duration })
+    if (edge.claim && !edge.future) world.append(svgNode('text', { class: 'graph-flow-claim', x: to.x + 14, y: to.y - 28 }, edge.claim.length > 48 ? `${edge.claim.slice(0, 47)}…` : edge.claim))
+    if (edge.active && !edge.future) {
+      const particle = svgNode('circle', { r: 4, class: 'energy-particle', 'data-edge-id': edge.id, 'data-duration': edge.duration })
       particle.append(svgNode('animateMotion', { dur: `${edge.duration}ms`, repeatCount: 'indefinite', path: pathData }))
       world.append(particle)
     }
   }
-  const titleLines = value => {
-    const words = String(value).split(/\s+/)
-    const lines = ['']
-    for (const word of words) {
-      const current = lines.at(-1)
-      if (current && `${current} ${word}`.length > 40 && lines.length < 2) lines.push(word)
-      else lines[lines.length - 1] = `${current} ${word}`.trim()
-    }
-    return lines
-  }
-  const clip = (value, max) => {
-    const rendered = String(value)
-    return rendered.length > max ? `${rendered.slice(0, max - 1)}…` : rendered
-  }
+
   for (const item of graphNodes) {
-    const open = state.openGraphNodes.has(item.id)
-    const detailNoun = item.kind === 'component' ? 'tasks' : item.kind === 'entity' ? 'history' : 'details'
-    const group = svgNode('g', { class: `graph-node ${item.status} ${item.flowState || ''} ${item.kind}${open ? ' selected' : ''}${item.future ? ' future' : ''}${item.current ? ' current' : ''}`, 'data-node-id': item.id, 'data-node-kind': item.kind, 'data-node-group': item.group, 'data-flow-state': item.flowState, transform: `translate(${item.x} ${item.y})`, tabindex: item.future ? null : 0, role: item.future ? null : 'button', 'aria-hidden': item.future ? true : null, 'aria-expanded': item.future ? null : open, 'aria-label': item.future ? null : `${open ? 'Hide' : 'Show'} ${detailNoun} for ${item.title}` })
-    group.append(svgNode('rect', { class: 'graph-node-box', width: nodeW, height: nodeH, rx: 8 }), svgNode('circle', { class: 'graph-port', cx: 0, cy: nodeH / 2, r: 4 }), svgNode('circle', { class: 'graph-port', cx: nodeW, cy: nodeH / 2, r: 4 }))
-    group.append(svgNode('text', { class: 'graph-node-kind', x: 16, y: 25 }, String(item.kicker).slice(0, 48)))
-    const lines = titleLines(item.title)
-    lines.forEach((line, index) => group.append(svgNode('text', { class: 'graph-node-title', x: 16, y: 54 + index * 20 }, line)))
-    const metaY = 54 + (lines.length - 1) * 20 + 28
-    if (item.kind === 'entity' || item.kind === 'site') {
-      group.append(svgNode('text', { class: 'graph-node-state', x: 16, y: metaY }, clip(item.stateLine, 52)))
-      group.append(svgNode('text', { class: 'graph-node-last-change', x: 16, y: metaY + 24 }, clip(item.lastChangeLine, 52)))
-      group.append(svgNode('text', { class: 'graph-node-history', x: 16, y: nodeH - 14 }, open ? item.historyLabel.replace('open history', 'close history') : item.historyLabel))
-    } else {
-      group.append(svgNode('text', { class: 'graph-node-meta', x: 16, y: metaY }, item.meta.slice(0, 58)))
-      group.append(svgNode('rect', { class: 'graph-progress-bg', x: 16, y: 120, width: nodeW - 32, height: 4, rx: 2 }), svgNode('rect', { class: 'graph-progress', x: 16, y: 120, width: (nodeW - 32) * item.progress, height: 4, rx: 2 }))
-      group.append(svgNode('text', { class: 'graph-node-action', x: 16, y: 153 }, open ? 'Hide details ↑' : `Show ${item.kind === 'component' ? 'tasks' : 'properties'} ↓`))
+    const selected = state.inspectorSelection?.kind === 'place' && state.inspectorSelection.id === item.id
+    const flowClass = item.flowState || 'idle'
+    const classes = `graph-node ${flowClass} ${item.kind}${selected ? ' selected' : ''}${item.future ? ' future' : ''}${item.current ? ' current' : ''}`
+    const group = svgNode('g', { class: classes, 'data-node-id': item.id, 'data-node-kind': item.kind, 'data-node-group': item.group, 'data-flow-state': flowClass, transform: `translate(${item.x} ${item.y})`, tabindex: item.future ? null : 0, role: item.future ? null : 'button', 'aria-hidden': item.future ? true : null, 'aria-label': item.future ? null : `Inspect ${item.title}` })
+    const previous = state.nodePositions.get(item.id)
+    if (previous && (previous.x !== item.x || previous.y !== item.y) && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      group.append(svgNode('animateTransform', { attributeName: 'transform', type: 'translate', from: `${previous.x} ${previous.y}`, to: `${item.x} ${item.y}`, dur: '620ms', fill: 'freeze', calcMode: 'spline', keySplines: '.16 1 .3 1' }))
     }
-    if (item.kind !== 'entity' && item.kind !== 'site') {
-      const status = svgNode('g', { class: 'graph-node-status', transform: `translate(${nodeW - 26} 26)` })
-      status.append(svgNode('circle', { r: 8 }))
-      if (item.status === 'done') status.append(svgNode('path', { d: 'M-4 0l3 3 6-7' }))
-      group.append(status)
-    }
-    const select = () => {
-      open ? state.openGraphNodes.delete(item.id) : state.openGraphNodes.add(item.id)
-      if (item.seq) state.selectedSeq = item.seq
-      renderComponents(model); renderDetail(model); renderLedger(model)
+    const height = metrics[item.id].h
+    const foreign = svgNode('foreignObject', { class: 'place-card-foreign', x: 0, y: 0, width: nodeW, height })
+    foreign.append(placeCard(item, height, model))
+    group.append(foreign)
+    if (!item.topologyRoot) group.append(svgNode('circle', { class: `graph-port${flowClass === 'live' ? ' live' : ''}`, cx: 0, cy: 15, r: 4 }))
+    group.append(svgNode('circle', { class: `graph-port${flowClass === 'live' ? ' live' : ''}`, cx: nodeW, cy: 15, r: 4 }))
+    const select = event => {
+      if (event.target.closest?.('.tail-more')) return
+      event.stopPropagation()
+      openInspector({ kind: 'place', id: item.id }, model, topology)
     }
     if (!item.future) {
       group.addEventListener('click', select)
-      group.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select() } })
+      group.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(event) } })
     }
     world.append(group)
-    if (open) {
-      const detailY = item.y + nodeH + 24, detailH = metrics[item.id].detailH
-      world.append(svgNode('path', { class: 'graph-detail-tether', d: `M${item.x + nodeW / 2} ${item.y + nodeH}V${detailY}` }))
-      const foreign = svgNode('foreignObject', { class: 'graph-detail', x: item.x, y: detailY, width: nodeW, height: detailH })
-      const card = node('div', 'graph-detail-card')
-      card.setAttribute('role', 'list')
-      for (const [rowIndex, row] of item.rows.entries()) {
-        const capsule = node('div', `graph-detail-row ${row.status}`)
-        capsule.setAttribute('role', 'listitem')
-        const heading = node('div', 'graph-detail-heading')
-        heading.append(node('i', 'graph-detail-marker'), node('strong', '', row.title), node('span', '', row.meta))
-        capsule.append(heading)
-        if (row.properties.length) {
-          const properties = node('dl', 'graph-property-list')
-          for (const property of row.properties) {
-            const propertyRow = node('div', 'graph-property-row')
-            propertyRow.style.setProperty('--row-delay', `${120 + rowIndex * 70}ms`)
-            propertyRow.append(node('dt', '', property.label), node('dd', '', property.value))
-            properties.append(propertyRow)
-          }
-          capsule.append(properties)
-        }
-        card.append(capsule)
-      }
-      foreign.append(card); world.append(foreign)
-    }
   }
+  state.nodePositions = new Map(graphNodes.map(item => [item.id, { x: item.x, y: item.y }]))
+
   svg.append(world)
-  const controlIcon = pathData => {
+  const controlIcon = paths => {
     const icon = svgNode('svg', { viewBox: '0 0 24 24', 'aria-hidden': true })
-    for (const path of pathData) icon.append(svgNode('path', { d: path }))
+    for (const d of paths) icon.append(svgNode('path', { d }))
     return icon
   }
   const controls = node('div', 'graph-controls')
   const zoomOut = node('button', 'graph-control'); zoomOut.type = 'button'; zoomOut.setAttribute('aria-label', 'Zoom graph out'); zoomOut.append(controlIcon(['M6 12h12']))
-  const zoomValue = node('span', 'graph-zoom', 'Fit')
+  const zoomValue = node('span', 'graph-zoom', '100%')
   const zoomIn = node('button', 'graph-control'); zoomIn.type = 'button'; zoomIn.setAttribute('aria-label', 'Zoom graph in'); zoomIn.append(controlIcon(['M12 6v12', 'M6 12h12']))
   const fit = node('button', 'graph-control fit'); fit.type = 'button'; fit.setAttribute('aria-label', 'Fit graph to view'); fit.append(controlIcon(['M9 4H4v5', 'M15 4h5v5', 'M20 15v5h-5', 'M4 15v5h5']))
   controls.append(zoomOut, zoomValue, zoomIn, fit)
@@ -577,149 +575,168 @@ function renderComponents(model, topology = currentTopology(model)) {
   const fitted = { ...view }
   const updateView = () => { svg.setAttribute('viewBox', `${view.x} ${view.y} ${view.width} ${view.height}`); zoomValue.textContent = `${Math.round(fitted.width / view.width * 100)}%` }
   const zoom = factor => { const width = view.width * factor, height = view.height * factor; view = { x: view.x + (view.width - width) / 2, y: view.y + (view.height - height) / 2, width, height }; updateView() }
-  zoomIn.addEventListener('click', () => zoom(.82)); zoomOut.addEventListener('click', () => zoom(1.22)); fit.addEventListener('click', () => { view = { ...fitted }; updateView() })
+  zoomIn.addEventListener('click', () => zoom(.82))
+  zoomOut.addEventListener('click', () => zoom(1.22))
+  fit.addEventListener('click', () => { view = { ...fitted }; updateView() })
   let pan = null
-  svg.addEventListener('pointerdown', event => { if (event.target.closest('.graph-node')) return; svg.setPointerCapture(event.pointerId); pan = { x: event.clientX, y: event.clientY, viewX: view.x, viewY: view.y } })
+  svg.addEventListener('pointerdown', event => { if (event.target.closest('.graph-node, .graph-edge-hit')) return; svg.setPointerCapture(event.pointerId); pan = { x: event.clientX, y: event.clientY, viewX: view.x, viewY: view.y } })
   svg.addEventListener('pointermove', event => { if (!pan) return; const box = svg.getBoundingClientRect(); view.x = pan.viewX - (event.clientX - pan.x) * view.width / box.width; view.y = pan.viewY - (event.clientY - pan.y) * view.height / box.height; updateView() })
-  svg.addEventListener('pointerup', () => { pan = null }); svg.addEventListener('pointercancel', () => { pan = null })
+  svg.addEventListener('pointerup', () => { pan = null })
+  svg.addEventListener('pointercancel', () => { pan = null })
   svg.addEventListener('wheel', event => { event.preventDefault(); zoom(event.deltaY < 0 ? .9 : 1.1) }, { passive: false })
   updateView()
 }
 
-function renderLedger(model, topology = currentTopology(model)) {
-  if (topology.changes.length) {
-    const rows = [...topology.changes].reverse().map(change => {
-      const button = node('button', 'ledger-row')
-      button.type = 'button'
-      button.dataset.class = change.status === 'confirmed' ? 'observed' : 'declared'
-      button.setAttribute('aria-pressed', String(change.seq === state.selectedSeq))
-      button.append(node('span', 'ledger-time', formatClock(change.ts)))
-      const evidence = node('span', 'ledger-evidence')
-      evidence.append(document.createElement('i'))
-      const copy = node('span')
-      copy.append(
-        node('strong', '', `${change.verb} ${change.placeTitle}`),
-        node('span', '', change.confirmation
-          ? `${change.claim ? 'Claim + confirmation' : 'Confirmation without claim'} · ${change.confirmation.summary}`
-          : `${change.status === 'in-flight' ? 'Claim in flight' : 'Unconfirmed claim'} · ${change.claim?.summary || change.verb}`),
-      )
-      evidence.append(copy)
-      button.append(evidence, node('span', 'channel-tag', displayChannel(change.channel)))
-      button.addEventListener('click', () => {
-        state.selectedSeq = change.seq
-        render(model)
-      })
-      return button
-    })
-    $('ledger-rows').replaceChildren(...rows)
-    return
-  }
-  const events = (model.recent || []).slice(0, 70)
-  const rows = events.map(event => {
-    const button = node('button', 'ledger-row')
-    button.type = 'button'
-    button.dataset.class = eventClass(event)
-    button.setAttribute('aria-pressed', String(event.seq === state.selectedSeq))
-    button.append(node('span', 'ledger-time', formatClock(event.ts)))
-    const evidence = node('span', 'ledger-evidence')
-    evidence.append(document.createElement('i'))
-    const copy = node('span')
-    copy.append(node('strong', '', event.summary || summarizeEvent(event)), node('span', '', eventDetail(event)))
-    evidence.append(copy)
-    button.append(evidence, node('span', 'channel-tag', channel(event)))
-    button.addEventListener('click', () => {
-      state.selectedSeq = event.seq
-      render(model)
-    })
-    return button
-  })
-  const ledger = $('ledger-rows')
-  if (!rows.length) {
-    const empty = node('div', 'empty-ledger')
-    empty.append(node('strong', '', 'No evidence has landed yet.'), node('span', '', 'The watcher, agent hooks, sidecar, and WordPress audit log all write into this same ledger.'))
-    ledger.replaceChildren(empty)
-  } else ledger.replaceChildren(...rows)
+function inspectorSection(title) {
+  const section = node('section', 'inspector-section')
+  section.append(node('h3', '', title))
+  return section
 }
 
-function renderPresence(model) {
-  const connections = Object.values(model.connections || {}).filter(connection => connection.active).sort((a, b) => b.lastSeenAt - a.lastSeenAt)
-  const active = connections.length
-  setText('presence-summary', active ? `${active} live ${active === 1 ? 'channel' : 'channels'}` : 'No live channels')
-  const rows = connections.slice(0, 8).map(connection => {
-    const row = node('div', 'presence-row')
-    row.dataset.active = String(connection.active)
-    row.dataset.phase = connection.phase
-    row.append(document.createElement('i'))
-    const copy = node('div')
-    const actor = typeof connection.actor === 'string' ? connection.actor : connection.actor?.login || connection.channel || 'Connection'
-    copy.append(node('strong', '', actor))
-    copy.append(node('span', '', `${connection.channel || 'unknown channel'} · ${connection.transport || 'transport unknown'} · ${connection.phase}`))
-    row.append(copy)
-    return row
-  })
-  $('presence-list').replaceChildren(...(rows.length ? rows : [node('p', 'panel-empty', 'Connections appear here even before they change WordPress.')]))
-}
-
-function renderWordPress(model) {
-  const actions = model.wordpress?.actions || []
-  setText('wordpress-count', `${actions.length} observed ${actions.length === 1 ? 'effect' : 'effects'}`)
-  const rows = actions.slice(0, 8).map(action => {
-    const row = node('div', 'wordpress-row')
-    row.append(document.createElement('i'))
-    const copy = node('div')
-    copy.append(node('strong', '', action.summary || action.title || action.kind))
-    const context = [action.plugin, action.objectType, action.title, action.blocks?.join(', '), action.channel].filter(Boolean).join(' · ')
-    copy.append(node('span', '', context || `${action.source} · ${formatClock(action.ts)}`))
-    row.append(copy)
-    return row
-  })
-  $('wordpress-list').replaceChildren(...(rows.length ? rows : [node('p', 'panel-empty', 'Runtime and hook-layer effects will remain readable after the site is gone.')]))
-}
-
-function renderDetail(model) {
-  const event = selectedEvent()
-  const detail = $('event-detail')
-  if (!event) {
-    detail.className = 'event-detail empty'
-    detail.textContent = 'Technical provenance stays one level down, ready when you need it.'
-    setText('detail-sequence', 'Select a ledger row')
-    return
-  }
-  detail.className = 'event-detail'
-  setText('detail-sequence', `Event ${event.seq} · ${event.kind}`)
-  const summary = node('p', 'detail-summary', summarizeEvent(event))
-  const facts = node('dl', 'detail-grid')
-  const requestId = event.data?.requestId || event.data?.correlationId
-  const journey = requestId ? model.journeys?.[requestId] : null
-  const rows = [
-    ['Source', event.source], ['Channel', channel(event)], ['Observed at', new Date(event.ts).toISOString()],
-    ...(event.receivedAt ? [['Captured at', new Date(event.receivedAt).toISOString()], ['Capture lag', duration(event.receivedAt - event.ts)]] : []),
-    ...(requestId ? [['Request', requestId]] : []),
-    ...(journey?.effectLatencyMs !== null && journey?.effectLatencyMs !== undefined ? [['Declared → effect', duration(journey.effectLatencyMs)]] : []),
-    ['Sequence', event.seq],
-  ]
-  for (const [label, value] of rows) {
+function factList(rows) {
+  const list = node('dl', 'inspector-facts')
+  for (const [label, value] of rows.filter(([, value]) => value !== undefined && value !== null && value !== '')) {
     const row = document.createElement('div')
     row.append(node('dt', '', label), node('dd', '', String(value)))
-    facts.append(row)
+    list.append(row)
   }
-  const raw = node('pre', 'detail-json', JSON.stringify(event.data, null, 2))
-  detail.replaceChildren(summary, facts, raw)
+  return list
+}
+
+function inspectorChanges(changes, model) {
+  const section = inspectorSection('Changes')
+  if (!changes.length) {
+    section.append(node('p', 'inspector-empty', 'No changes are recorded for this place.'))
+    return section
+  }
+  for (const change of [...changes].reverse()) {
+    const entry = node('article', 'inspector-change')
+    const head = node('div', 'inspector-change-head')
+    head.append(node('strong', '', change.claim?.summary || change.confirmation?.summary || change.verb), node('time', '', formatClock(change.ts)))
+    entry.append(head)
+    const requestId = change.requestId
+    const journey = requestId ? model.journeys?.[requestId] : null
+    entry.append(factList([
+      ['Claim', change.claim?.summary || 'No declared claim'],
+      ['Confirmation', change.confirmation?.summary || (change.status === 'in-flight' ? 'Awaiting WordPress' : 'No confirmation')],
+      ['Channel', displayChannel(change.channel)],
+      ['Transport', change.transport || change.confirmation?.transport || change.claim?.transport],
+      ['Request', requestId],
+      ['Metadata', change.state?.metaKey || change.confirmation?.state?.metaKey],
+      ['Latency', journey?.effectLatencyMs !== null && journey?.effectLatencyMs !== undefined ? duration(journey.effectLatencyMs) : null],
+      ['Sequence', change.seq],
+    ]))
+    section.append(entry)
+  }
+  return section
+}
+
+function renderPlaceInspector(model, topology) {
+  const panel = $('place-panel')
+  const selection = state.inspectorSelection
+  if (!selection) {
+    panel.replaceChildren(node('p', 'inspector-empty', 'Select a place or flow to inspect its evidence.'))
+    return
+  }
+  if (selection.kind === 'edge') {
+    const edge = topology.edges.find(item => item.id === selection.id)
+    if (!edge) {
+      panel.replaceChildren(node('p', 'inspector-empty', 'This flow has not appeared at the current playhead.'))
+      return
+    }
+    setText('inspector-title', displayChannel(edge.channel))
+    setText('inspector-subtitle', 'Flow evidence')
+    const facts = inspectorSection('Flow')
+    facts.append(factList([
+      ['Channel', displayChannel(edge.channel)],
+      ['State', edge.flowState],
+      ['Phase', edge.phase],
+      ['Actor', typeof edge.actor === 'string' ? edge.actor : edge.actor?.login],
+      ['Transports', edge.transports?.join(' · ')],
+      ['Requests', edge.requests?.join('\n')],
+      ['Recorded duration', duration(edge.durationMs)],
+      ['Target', edge.to],
+    ]))
+    const place = topology.nodes.find(item => item.id === edge.to)
+    panel.replaceChildren(facts, inspectorChanges(place?.changes?.filter(change => edge.requests?.includes(change.requestId)) || [], model))
+    return
+  }
+  const place = selection.id === topology.root.id ? topology.root : topology.nodes.find(item => item.id === selection.id)
+  if (!place || place.future) {
+    panel.replaceChildren(node('p', 'inspector-empty', 'This place has not appeared at the current playhead.'))
+    return
+  }
+  setText('inspector-title', place.title)
+  setText('inspector-subtitle', `${titleCase(place.type)} · ${place.identity}`)
+  const facts = inspectorSection('Place')
+  facts.append(factList([
+    ['Stable identity', place.id],
+    ['Present state', place.stateLine],
+    ['Changes', place.changes?.length || 0],
+    ['Channels', place.channels?.map(displayChannel).join(' · ')],
+    ['Transports', place.transports?.join(' · ')],
+    ['Plugins', place.plugins?.join(' · ')],
+    ['Last sequence', place.lastSeq],
+  ]))
+  panel.replaceChildren(facts, inspectorChanges(place.changes || [], model))
+}
+
+function renderTrailInspector() {
+  const panel = $('trail-panel')
+  const events = [...visibleTrailEvents()].sort((left, right) => left.seq - right.seq)
+  if (!events.length) {
+    panel.replaceChildren(node('p', 'inspector-empty', 'No trail rows have been recorded.'))
+    return
+  }
+  const rows = events.map(event => {
+    const row = node('div', 'trail-row')
+    row.dataset.seq = String(event.seq)
+    const copy = node('div', 'trail-copy')
+    copy.append(node('strong', '', event.summary || summarizeEvent(event)), node('span', '', `${event.kind} · ${channel(event)}`))
+    row.append(node('span', 'trail-seq', `#${event.seq}`), node('time', 'trail-time', formatClock(event.ts)), copy)
+    return row
+  })
+  panel.replaceChildren(...rows)
+}
+
+function renderInspector(model, topology) {
+  const open = Boolean(state.inspectorSelection)
+  const shell = document.querySelector('.app-shell')
+  shell.dataset.inspectorOpen = String(open)
+  $('inspector').setAttribute('aria-hidden', String(!open))
+  for (const button of document.querySelectorAll('[data-inspector-tab]')) button.setAttribute('aria-selected', String(button.dataset.inspectorTab === state.inspectorTab))
+  $('place-panel').hidden = state.inspectorTab !== 'place'
+  $('trail-panel').hidden = state.inspectorTab !== 'trail'
+  renderPlaceInspector(model, topology)
+  renderTrailInspector()
+}
+
+function openInspector(selection, model = currentProjection(), topology = currentTopology(model)) {
+  state.inspectorSelection = selection
+  state.inspectorTab = 'place'
+  render(model)
+  syncDeepLink()
+  requestAnimationFrame(() => $('inspector-close').focus({ preventScroll: true }))
+}
+
+function closeInspector() {
+  state.inspectorSelection = null
+  document.querySelector('.app-shell').dataset.inspectorOpen = 'false'
+  $('inspector').setAttribute('aria-hidden', 'true')
+  document.querySelector('.graph-node.selected')?.classList.remove('selected')
+  syncDeepLink()
 }
 
 function render(model = currentProjection()) {
   const topology = currentTopology(model)
-  document.querySelector('.app-shell').dataset.appState = 'ready'
-  document.querySelector('.app-shell').dataset.mode = state.mode
+  const shell = document.querySelector('.app-shell')
+  shell.dataset.appState = 'ready'
+  shell.dataset.mode = state.mode
   renderHeader(model)
   renderSessions(model)
-  renderOrbit(model)
-  renderBrief(model, topology)
+  renderOrbit(model, topology)
   renderComponents(model, topology)
-  renderLedger(model, topology)
-  renderPresence(model)
-  renderWordPress(model)
-  renderDetail(model)
+  renderInspector(model, topology)
 }
 
 async function fetchJson(url) {
@@ -742,13 +759,16 @@ async function loadLive() {
   render(state.liveModel)
 }
 
-async function selectSession(sessionId) {
+async function selectSession(sessionId, { updateUrl = true } = {}) {
   stopPlayback()
+  if (!sessionId) return
   if (sessionId === state.liveModel.daemon?.sessionId) {
     state.mode = 'live'
     state.sessionId = sessionId
+    state.inspectorSelection = null
     syncModeButtons()
     render(state.liveModel)
+    if (updateUrl) syncDeepLink()
     return
   }
   state.replayEvents = await fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/events`)
@@ -756,27 +776,20 @@ async function selectSession(sessionId) {
   state.sessionId = sessionId
   state.mode = 'replay'
   state.cursor = Math.max(0, state.replayEvents.length - 1)
-  state.selectedSeq = null
+  state.inspectorSelection = null
   syncModeButtons()
   render()
+  if (updateUrl) syncDeepLink()
 }
 
 function syncModeButtons() {
   for (const button of document.querySelectorAll('[data-mode]')) button.setAttribute('aria-selected', String(button.dataset.mode === state.mode))
 }
 
-function syncFocus() {
-  const shell = document.querySelector('.app-shell')
-  const button = $('focus-canvas')
-  shell.dataset.focus = String(state.focused)
-  button.setAttribute('aria-pressed', String(state.focused))
-  button.querySelector('span').textContent = state.focused ? 'Exit focus' : 'Focus canvas'
-}
-
-function setMode(mode) {
+function setMode(mode, { updateUrl = true } = {}) {
   stopPlayback()
   state.mode = mode
-  state.selectedSeq = null
+  state.inspectorSelection = null
   if (mode === 'live') {
     state.sessionId = state.liveModel.daemon?.sessionId
     state.cursor = Math.max(0, state.liveEvents.length - 1)
@@ -789,6 +802,54 @@ function setMode(mode) {
   }
   syncModeButtons()
   render()
+  if (updateUrl) syncDeepLink()
+}
+
+async function applyDeepLink() {
+  const params = new URLSearchParams(window.location.search)
+  const requestedSession = params.get('session')
+  const knownSession = requestedSession && state.sessions.some(session => session.id === requestedSession)
+  const staleSession = Boolean(requestedSession && !knownSession)
+
+  if (knownSession) await selectSession(requestedSession, { updateUrl: false })
+
+  if (!staleSession) {
+    const requestedMode = params.get('mode')
+    if (['live', 'replay', 'timelapse'].includes(requestedMode)) {
+      const liveSessionId = state.liveModel.daemon?.sessionId || state.liveModel.session?.sessionId
+      if (requestedMode === 'live' && (!requestedSession || requestedSession === liveSessionId)) {
+        state.mode = 'live'
+        state.sessionId = liveSessionId
+        state.cursor = Math.max(0, state.liveEvents.length - 1)
+      } else if (requestedMode !== 'live') {
+        if (!state.replayEvents.length) {
+          state.replayEvents = [...state.liveEvents]
+          state.replayIndex = buildReplayIndex(state.replayEvents)
+        }
+        state.mode = requestedMode
+        state.cursor = requestedMode === 'timelapse' ? 0 : Math.max(0, state.replayEvents.length - 1)
+      }
+    }
+
+    if (state.mode !== 'live' && params.has('seq')) {
+      const sequence = Number(params.get('seq'))
+      const index = state.replayEvents.findIndex(event => event.seq === sequence)
+      if (index >= 0) state.cursor = index
+    }
+
+    const model = currentProjection()
+    const topology = currentTopology(model)
+    const placeId = params.get('place')
+    const flowId = params.get('flow')
+    if (placeId === topology.root.id || topology.nodes.some(place => place.id === placeId && !place.future)) state.inspectorSelection = { kind: 'place', id: placeId }
+    else if (topology.edges.some(flow => flow.id === flowId && !flow.future)) state.inspectorSelection = { kind: 'edge', id: flowId }
+    state.inspectorTab = state.inspectorSelection && params.get('tab') === 'trail' ? 'trail' : 'place'
+  }
+
+  state.urlReady = true
+  syncModeButtons()
+  render()
+  syncDeepLink()
 }
 
 function stopPlayback() {
@@ -809,8 +870,10 @@ function togglePlayback() {
     state.cursor++
     if (state.cursor >= state.replayEvents.length - 1) stopPlayback()
     render()
+    syncDeepLink()
   }, state.mode === 'timelapse' ? 180 : 420)
   render()
+  syncDeepLink()
 }
 
 function connectEvents() {
@@ -838,35 +901,36 @@ function connectEvents() {
 }
 
 for (const button of document.querySelectorAll('[data-mode]')) button.addEventListener('click', () => setMode(button.dataset.mode))
+for (const button of document.querySelectorAll('[data-inspector-tab]')) button.addEventListener('click', event => {
+  event.preventDefault()
+  event.stopPropagation()
+  state.inspectorTab = button.dataset.inspectorTab
+  renderInspector(currentProjection(), currentTopology(currentProjection()))
+  syncDeepLink()
+})
+$('session-select').addEventListener('change', event => selectSession(event.target.value))
 $('scrubber').addEventListener('input', event => {
   stopPlayback()
   state.cursor = Number(event.target.value)
   render()
+  syncDeepLink()
 })
 $('playback').addEventListener('click', togglePlayback)
-$('focus-canvas').addEventListener('click', () => {
-  state.focused = !state.focused
-  syncFocus()
-  render()
-})
-$('copy-link').addEventListener('click', async () => {
-  try {
-    await navigator.clipboard.writeText(location.href)
-    toast('Local board link copied')
-  } catch {
-    toast('Copy unavailable — use the address bar')
-  }
-})
+$('inspector').addEventListener('click', event => event.stopPropagation())
+$('inspector-close').addEventListener('click', closeInspector)
+$('inspector-scrim').addEventListener('click', closeInspector)
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && state.playing) { stopPlayback(); render() }
+  if (event.key === 'Escape' && state.inspectorSelection) { closeInspector(); return }
+  if (event.key === 'Escape' && state.playing) { stopPlayback(); render(); return }
   if (event.key === ' ' && state.mode !== 'live' && event.target === document.body) { event.preventDefault(); togglePlayback() }
 })
 
-syncFocus()
-loadLive().then(connectEvents).catch(error => {
+loadLive().then(applyDeepLink).then(connectEvents).catch(error => {
   document.querySelector('.app-shell').dataset.appState = 'error'
-  setText('brief-title', 'Aphelion could not open this trail')
-  setText('brief-detail', `${error.message}. Check that the local daemon is still running, then reload.`)
+  const empty = node('div', 'empty-board')
+  empty.append(node('p', '', 'Aphelion could not open this trail.'), node('p', '', `${error.message}. Reload after the local daemon returns.`))
+  $('component-flow').replaceChildren(empty)
   $('connection-banner').hidden = false
-  $('connection-banner').querySelector('strong').textContent = 'The local board is unavailable.'
+  $('connection-banner').querySelector('strong').textContent = 'Local board unavailable.'
+  toast('Trail unavailable')
 })

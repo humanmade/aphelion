@@ -53,14 +53,21 @@ async function wpSnapshot(command) {
   return snapshot
 }
 
+// Mirror the audit mu-plugin's noise predicate: transient/cron/cache
+// bookkeeping churn never becomes runtime drift or a place on the map.
+function isBookkeepingOption(name) {
+  return name.startsWith('_transient_') || name.startsWith('_site_transient_')
+    || ['cron', 'category_children', 'rewrite_rules', 'recently_edited'].includes(name)
+}
+
 function fingerprint(value) {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16)
 }
 
 function snapshotSummary(snapshot) {
   return {
-    optionNames: Object.keys(snapshot),
-    options: Object.fromEntries(Object.entries(snapshot).map(([name, value]) => [name, {
+    optionNames: Object.keys(snapshot).filter(name => !isBookkeepingOption(name)),
+    options: Object.fromEntries(Object.entries(snapshot).filter(([name]) => !isBookkeepingOption(name)).map(([name, value]) => [name, {
       type: value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value,
       fingerprint: fingerprint(value),
     }])),
@@ -152,6 +159,7 @@ export function startSidecar(options) {
         baselineWritten = true
       } else {
         for (const [name, value] of Object.entries(snapshot)) {
+          if (isBookkeepingOption(name)) continue
           const nextFingerprint = fingerprint(value)
           const previous = previousOptions.get(name)
           if (!previous || previous.fingerprint !== nextFingerprint) {

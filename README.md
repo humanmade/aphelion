@@ -2,7 +2,7 @@
 
 **The local flight recorder for AI agents working on WordPress.**
 
-![Aphelion replays agent work over a stable map of the WordPress objects it touched](assets/aphelion-board.png)
+![Aphelion replays agent work over a stable map of the WordPress objects it touched](assets/aphelion-board.jpg)
 
 An agent says it updated a page. The filesystem shows a diff. WordPress reports a save.
 Those are three fragments of one story, usually scattered across terminals, session logs,
@@ -82,6 +82,22 @@ Edge motion uses the recorded request or connection duration, falling back to 12
 no positive gap is measurable. Opening a place exposes its scrollable change history; request
 IDs, transports, and raw event data remain in the inspector rather than riding the canvas. Maps are
 rebuilt per session; clustering and durable cross-session site maps remain deferred.
+
+## Share a local run
+
+The board URL follows what you are viewing. Choosing a recorded session, changing replay or
+timelapse mode, moving the playhead, or opening a place or flow updates the address bar with a
+deep link. Copy that URL to reopen the same local evidence state without navigating the board
+again.
+
+```text
+http://127.0.0.1:5330/?session=20260825T035601Z-30074fe2&mode=replay&seq=30&place=wp%3Apost%3A464
+```
+
+Deep links use stable session IDs, trail sequence numbers, and topology identities. Invalid or
+expired parameters fall back to the available live board instead of blocking startup. These are
+localhost links: they do not upload or publish the trail, and another person can use one only
+when they can reach the same local Aphelion daemon and its trail files.
 
 ## Add WordPress evidence
 

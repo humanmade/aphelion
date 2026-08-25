@@ -303,7 +303,7 @@ function placeState(entity, changes) {
     return `${type} · ${state.restored ? 'restored' : latest ? 'changed' : 'unchanged'}`
   }
   if (entity.type === 'plugin') return `${confirmations.length} confirmed ${confirmations.length === 1 ? 'change' : 'changes'}`
-  return confirmations.length ? `${confirmations.length} confirmed ${confirmations.length === 1 ? 'change' : 'changes'}` : 'No confirmed changes'
+  if (entity.category === 'abilities') return confirmations.length ? `${confirmations.length} ${confirmations.length === 1 ? 'invocation' : 'invocations'}` : 'No confirmed invocations'
 }
 
 function mergeEntity(previous, incoming) {
@@ -497,9 +497,10 @@ function analyze(events, requestTargets) {
     currentTargets = eventTargets
   }
 
+  const sessionEnded = events.some(event => event?.kind === 'session.end')
   for (const edge of edges.values()) {
     const states = [...edge.requests].map(id => requestStates.get(id)).filter(Boolean)
-    edge.connected = states.some(request => request.open)
+    edge.connected = !sessionEnded && states.some(request => request.open)
     edge.active = edge.connected || states.some(request => request.declared && !request.observed)
     edge.current = `${edge.to}|${edge.channel}` === currentEdgeKey
     const latest = requestStates.get(edge.lastRequestId) || states.toSorted((a, b) => (b.lastAt || 0) - (a.lastAt || 0))[0]
@@ -514,7 +515,7 @@ function analyze(events, requestTargets) {
       ? 'settled'
       : edge.current && edge.connected
         ? 'live'
-        : edge.current && states.some(request => request.declared && !request.observed)
+        : edge.current && !sessionEnded && states.some(request => request.declared && !request.observed)
           ? 'claimed'
           : edge.connected
             ? 'live'
