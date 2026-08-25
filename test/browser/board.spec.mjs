@@ -357,7 +357,8 @@ test('twenty places occupy stable category lanes with one resting channel label'
     await expect(page.locator('.graph-node.entity')).toHaveCount(20)
     const after = await page.locator('.graph-node.entity').evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.dataset.nodeId, node.getAttribute('transform')])))
     for (const [id, transform] of Object.entries(before)) expect(after[id]).toBe(transform)
-    await expect(page.locator('.graph-lane')).toHaveCount(page.viewportSize().width <= 680 ? 0 : 1)
+    await expect(page.locator('.graph-lane')).toHaveCount(1)
+    await expect(page.locator('.graph-lane-label')).toHaveText('content')
     const gridShape = await page.locator('.graph-node.entity').evaluateAll(nodes => ({
       columns: new Set(nodes.map(node => node.getAttribute('transform').match(/translate\(([-\d.]+)/)?.[1])).size,
       rows: new Set(nodes.map(node => node.getAttribute('transform').match(/\s([-\d.]+)\)/)?.[1])).size,
@@ -365,6 +366,30 @@ test('twenty places occupy stable category lanes with one resting channel label'
     expect(gridShape).toEqual(page.viewportSize().width <= 680 ? { columns: 1, rows: 20 } : { columns: 4, rows: 5 })
     await expect(page.locator('.graph-edge-label:not([hidden])')).toHaveCount(1)
     await expect(page.locator('.graph-edge-label:not([hidden])')).toHaveText('WP-CLI')
+    if (page.viewportSize().width > 680) {
+      const geometry = await page.locator('.graph-edge.channel').evaluateAll(paths => {
+        const cards = [...document.querySelectorAll('.graph-node.entity:not(.future) .place-card')].map(card => card.getBoundingClientRect())
+        const intersections = []
+        for (const path of paths) {
+          const length = path.getTotalLength()
+          const matrix = path.getScreenCTM()
+          for (let distance = 1; distance < length - 1; distance += 2) {
+            const point = path.getPointAtLength(distance).matrixTransform(matrix)
+            if (cards.some(card => point.x > card.left + 1 && point.x < card.right - 1 && point.y > card.top + 1 && point.y < card.bottom - 1)) {
+              intersections.push(path.dataset.edgeId)
+              break
+            }
+          }
+        }
+        return { intersections, hasCurves: paths.some(path => /[CQSA]/i.test(path.getAttribute('d') || '')) }
+      })
+      expect(geometry.intersections).toEqual([])
+      expect(geometry.hasCurves).toBe(false)
+
+      await ingest({ source: 'agent', kind: 'agent.action.declared', data: { requestId: 'twenty-active', objectType: 'post', objectId: 19, postType: 'page', changedProperties: ['content'], summary: 'Update Page 19', channel: 'wp-cli' } })
+      const particlePath = page.locator('[data-edge-id="channel:wp-cli:wp:post:19"] .energy-particle animateMotion')
+      await expect(particlePath).toHaveAttribute('path', /^M[^CQSA]*H[^CQSA]*V[^CQSA]*H[^CQSA]*V[^CQSA]*H[^CQSA]*$/)
+    }
     const livePositions = await page.locator('.graph-node').evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.dataset.nodeId, node.getAttribute('transform')])))
     await page.getByRole('tab', { name: 'Replay' }).click()
     const replayPositions = await page.locator('.graph-node').evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.dataset.nodeId, node.getAttribute('transform')])))

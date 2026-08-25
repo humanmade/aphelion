@@ -246,6 +246,7 @@ function timeRange(group) {
 const actionForms = {
   update: ['Updated', 'Updating'],
   edit: ['Edited', 'Editing'],
+  rename: ['Renamed', 'Renaming'],
   restore: ['Restored', 'Restoring'],
   inspect: ['Inspected', 'Inspecting'],
   create: ['Created', 'Creating'],
@@ -268,6 +269,7 @@ function actionPhrase(summary, tense = 'past') {
 }
 
 function cardPhrase(change, awaiting) {
+  if (change.verb?.startsWith('Renam')) return change.verb
   if (change.claim?.summary) {
     const phrase = actionPhrase(change.claim.summary, awaiting ? 'progressive' : 'past')
     if (phrase) return awaiting ? `${phrase}…` : phrase
@@ -766,11 +768,36 @@ function renderComponents(model, topology = currentTopology(model)) {
   const graphRight = Math.max(compact ? flowWidth : 720, ...occupiedNodes.map(item => item.x + nodeW + padX))
   const graphBottom = Math.max(compact ? flowHeight : 420, ...occupiedNodes.map(item => item.y + metrics[item.id].h + padY))
   const byGraphId = Object.fromEntries(graphNodes.map(item => [item.id, item]))
+  const channelTrunks = new Map()
+  const channelRowBranches = new Map()
+  if (!compact) {
+    const channelEdges = graphEdges.filter(edge => edge.kind === 'channel' && byGraphId[edge.from]?.topologyRoot && byGraphId[edge.to]?.group === 'site')
+    const root = byGraphId['wp:site']
+    const firstLaneX = Math.min(...channelEdges.map(edge => byGraphId[edge.to].x))
+    const channels = [...new Set(channelEdges.map(edge => edge.channel))]
+    for (const [index, channel] of channels.entries()) {
+      channelTrunks.set(channel, Math.max(root.x + nodeW + 4, firstLaneX - 24 - index * 14))
+    }
+    for (const edge of channelEdges) {
+      const target = byGraphId[edge.to]
+      const key = `${edge.channel}:${target.y}`
+      channelRowBranches.set(key, Math.max(channelRowBranches.get(key) || 0, target.y + metrics[target.id].h + 12))
+    }
+  }
   const edgeGroups = new Map()
   for (const edge of graphEdges) (edgeGroups.get(edge.to) || edgeGroups.set(edge.to, []).get(edge.to)).push(edge)
   for (const list of edgeGroups.values()) list.forEach((edge, index) => { edge.laneOffset = (index - (list.length - 1) / 2) * 12 })
   const edgePath = (from, to, edge) => {
     const lane = edge.laneOffset || 0
+    const trunkX = channelTrunks.get(edge.channel)
+    if (trunkX !== undefined && edge.kind === 'channel' && from.topologyRoot && to.group === 'site') {
+      const x1 = from.x + nodeW
+      const y1 = from.y + 15
+      const branchY = channelRowBranches.get(`${edge.channel}:${to.y}`)
+      const approachX = to.x - 12
+      const inputY = to.y + 15
+      return `M${x1} ${y1}H${trunkX}V${branchY}H${approachX}V${inputY}H${to.x}`
+    }
     const vertical = Math.abs(from.x - to.x) < 30 || compact
     if (vertical) {
       const x1 = from.x + nodeW / 2 + lane, y1 = from.y + metrics[from.id].h, x2 = to.x + nodeW / 2 + lane, y2 = to.y
@@ -794,9 +821,9 @@ function renderComponents(model, topology = currentTopology(model)) {
       graph.laneElements.set(lane.id, entry)
       graph.laneLayer.append(entry.group)
     }
-    setSvgAttributes(entry.group, { class: `graph-lane${lane.empty ? ' empty' : ''}` })
+    setSvgAttributes(entry.group, { class: `graph-lane${lane.compact ? ' compact' : ''}${lane.empty ? ' empty' : ''}` })
     setSvgAttributes(entry.frame, { x: lane.x, y: lane.y, width: lane.width, height: lane.height })
-    setSvgAttributes(entry.label, { x: lane.x + 12, y: lane.y + (lane.empty ? 15 : 16) })
+    setSvgAttributes(entry.label, { x: lane.labelX ?? lane.x + 12, y: lane.labelY ?? lane.y + (lane.empty ? 15 : 16) })
     entry.label.textContent = lane.category
   }
   for (const [id, entry] of graph.laneElements) if (!wantedLanes.has(id)) { entry.group.remove(); graph.laneElements.delete(id) }
@@ -821,7 +848,7 @@ function renderComponents(model, topology = currentTopology(model)) {
     if (edge.label && !edge.future) {
       const vertical = Math.abs(from.x - to.x) < 30 || compact
       const resting = edge.kind === 'channel' && !edge.active
-      const labelX = resting ? from.x + nodeW + 16 : vertical ? to.x + nodeW / 2 + edge.laneOffset : (from.x + nodeW + to.x) / 2
+      const labelX = resting ? (channelTrunks.get(edge.channel) ?? from.x + nodeW) + 8 : vertical ? to.x + nodeW / 2 + edge.laneOffset : (from.x + nodeW + to.x) / 2
       const labelYBase = resting ? from.y + 19 + (edge.channelLabelIndex || 0) * edgeLabelStep : vertical ? to.y - 12 : to.y - 10
       const labelKey = `${Math.round(labelX / 48)}:${Math.round(labelYBase / 24)}`
       const stacked = labelStacks.get(labelKey) || 0

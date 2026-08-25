@@ -145,6 +145,7 @@ svg { display: block; }
 .graph-world { transform-box: fill-box; transform-origin: top left; }
 .graph-lane rect { fill: color-mix(in oklch, var(--surface) 20%, transparent); stroke: color-mix(in oklch, var(--border) 62%, transparent); stroke-width: 1; stroke-dasharray: 2 7; vector-effect: non-scaling-stroke; transition: width 500ms var(--ease-out), height 500ms var(--ease-out), fill 300ms var(--ease); }
 .graph-lane.empty rect { fill: color-mix(in oklch, var(--surface) 10%, transparent); }
+.graph-lane.compact rect { display: none; }
 .graph-lane-label { fill: var(--text-3); font: 500 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
 
 .graph-edge { fill: none; stroke: var(--border-strong); stroke-width: 1.15; vector-effect: non-scaling-stroke; transition: stroke 360ms var(--ease), opacity 360ms var(--ease), filter 360ms var(--ease); }
@@ -167,8 +168,13 @@ svg { display: block; }
 .graph-node.provisional .place-card { border-color: color-mix(in oklch, var(--declared) 55%, var(--border)); border-style: dashed; background: color-mix(in oklch, var(--surface) 82%, transparent); box-shadow: 0 0 20px color-mix(in oklch, var(--declared) 10%, transparent); }
 .graph-node.unconfirmed { opacity: .72; }
 .graph-node.unconfirmed .place-card { border-color: var(--border-strong); border-style: dashed; box-shadow: none; }
-.graph-node.birth { animation: node-birth 500ms var(--ease-out) both; transform-box: fill-box; transform-origin: left top; }
-@keyframes node-birth { from { opacity: 0; transform: scale(.965); } }
+/* Birth must scale in place: a CSS transform on the positioned <g> would override its
+   translate attribute and fly the card in from the canvas origin, so the group only
+   fades while the HTML card inside carries the scale. */
+.graph-node.birth { animation: node-fade 500ms var(--ease-out) both; }
+@keyframes node-fade { from { opacity: 0; } }
+.graph-node.birth .place-card { animation: node-birth 500ms var(--ease-out) both; transform-origin: left top; }
+@keyframes node-birth { from { transform: scale(.965); } }
 .place-card-foreign { overflow: visible; }
 .place-card { width: 100%; height: 100%; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); transition: border-color 420ms var(--ease), box-shadow 420ms var(--ease), opacity 420ms var(--ease); }
 .graph-node:hover .place-card, .graph-node:focus-visible .place-card, .graph-node.selected .place-card { border-color: var(--border-strong); }
@@ -622,6 +628,7 @@ function timeRange(group) {
 const actionForms = {
   update: ['Updated', 'Updating'],
   edit: ['Edited', 'Editing'],
+  rename: ['Renamed', 'Renaming'],
   restore: ['Restored', 'Restoring'],
   inspect: ['Inspected', 'Inspecting'],
   create: ['Created', 'Creating'],
@@ -644,6 +651,7 @@ function actionPhrase(summary, tense = 'past') {
 }
 
 function cardPhrase(change, awaiting) {
+  if (change.verb?.startsWith('Renam')) return change.verb
   if (change.claim?.summary) {
     const phrase = actionPhrase(change.claim.summary, awaiting ? 'progressive' : 'past')
     if (phrase) return awaiting ? `${phrase}…` : phrase
@@ -1142,11 +1150,36 @@ function renderComponents(model, topology = currentTopology(model)) {
   const graphRight = Math.max(compact ? flowWidth : 720, ...occupiedNodes.map(item => item.x + nodeW + padX))
   const graphBottom = Math.max(compact ? flowHeight : 420, ...occupiedNodes.map(item => item.y + metrics[item.id].h + padY))
   const byGraphId = Object.fromEntries(graphNodes.map(item => [item.id, item]))
+  const channelTrunks = new Map()
+  const channelRowBranches = new Map()
+  if (!compact) {
+    const channelEdges = graphEdges.filter(edge => edge.kind === 'channel' && byGraphId[edge.from]?.topologyRoot && byGraphId[edge.to]?.group === 'site')
+    const root = byGraphId['wp:site']
+    const firstLaneX = Math.min(...channelEdges.map(edge => byGraphId[edge.to].x))
+    const channels = [...new Set(channelEdges.map(edge => edge.channel))]
+    for (const [index, channel] of channels.entries()) {
+      channelTrunks.set(channel, Math.max(root.x + nodeW + 4, firstLaneX - 24 - index * 14))
+    }
+    for (const edge of channelEdges) {
+      const target = byGraphId[edge.to]
+      const key = `${edge.channel}:${target.y}`
+      channelRowBranches.set(key, Math.max(channelRowBranches.get(key) || 0, target.y + metrics[target.id].h + 12))
+    }
+  }
   const edgeGroups = new Map()
   for (const edge of graphEdges) (edgeGroups.get(edge.to) || edgeGroups.set(edge.to, []).get(edge.to)).push(edge)
   for (const list of edgeGroups.values()) list.forEach((edge, index) => { edge.laneOffset = (index - (list.length - 1) / 2) * 12 })
   const edgePath = (from, to, edge) => {
     const lane = edge.laneOffset || 0
+    const trunkX = channelTrunks.get(edge.channel)
+    if (trunkX !== undefined && edge.kind === 'channel' && from.topologyRoot && to.group === 'site') {
+      const x1 = from.x + nodeW
+      const y1 = from.y + 15
+      const branchY = channelRowBranches.get(`${edge.channel}:${to.y}`)
+      const approachX = to.x - 12
+      const inputY = to.y + 15
+      return `M${x1} ${y1}H${trunkX}V${branchY}H${approachX}V${inputY}H${to.x}`
+    }
     const vertical = Math.abs(from.x - to.x) < 30 || compact
     if (vertical) {
       const x1 = from.x + nodeW / 2 + lane, y1 = from.y + metrics[from.id].h, x2 = to.x + nodeW / 2 + lane, y2 = to.y
@@ -1170,9 +1203,9 @@ function renderComponents(model, topology = currentTopology(model)) {
       graph.laneElements.set(lane.id, entry)
       graph.laneLayer.append(entry.group)
     }
-    setSvgAttributes(entry.group, { class: `graph-lane${lane.empty ? ' empty' : ''}` })
+    setSvgAttributes(entry.group, { class: `graph-lane${lane.compact ? ' compact' : ''}${lane.empty ? ' empty' : ''}` })
     setSvgAttributes(entry.frame, { x: lane.x, y: lane.y, width: lane.width, height: lane.height })
-    setSvgAttributes(entry.label, { x: lane.x + 12, y: lane.y + (lane.empty ? 15 : 16) })
+    setSvgAttributes(entry.label, { x: lane.labelX ?? lane.x + 12, y: lane.labelY ?? lane.y + (lane.empty ? 15 : 16) })
     entry.label.textContent = lane.category
   }
   for (const [id, entry] of graph.laneElements) if (!wantedLanes.has(id)) { entry.group.remove(); graph.laneElements.delete(id) }
@@ -1197,7 +1230,7 @@ function renderComponents(model, topology = currentTopology(model)) {
     if (edge.label && !edge.future) {
       const vertical = Math.abs(from.x - to.x) < 30 || compact
       const resting = edge.kind === 'channel' && !edge.active
-      const labelX = resting ? from.x + nodeW + 16 : vertical ? to.x + nodeW / 2 + edge.laneOffset : (from.x + nodeW + to.x) / 2
+      const labelX = resting ? (channelTrunks.get(edge.channel) ?? from.x + nodeW) + 8 : vertical ? to.x + nodeW / 2 + edge.laneOffset : (from.x + nodeW + to.x) / 2
       const labelYBase = resting ? from.y + 19 + (edge.channelLabelIndex || 0) * edgeLabelStep : vertical ? to.y - 12 : to.y - 10
       const labelKey = `${Math.round(labelX / 48)}:${Math.round(labelYBase / 24)}`
       const stacked = labelStacks.get(labelKey) || 0

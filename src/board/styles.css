@@ -136,6 +136,7 @@ svg { display: block; }
 .graph-world { transform-box: fill-box; transform-origin: top left; }
 .graph-lane rect { fill: color-mix(in oklch, var(--surface) 20%, transparent); stroke: color-mix(in oklch, var(--border) 62%, transparent); stroke-width: 1; stroke-dasharray: 2 7; vector-effect: non-scaling-stroke; transition: width 500ms var(--ease-out), height 500ms var(--ease-out), fill 300ms var(--ease); }
 .graph-lane.empty rect { fill: color-mix(in oklch, var(--surface) 10%, transparent); }
+.graph-lane.compact rect { display: none; }
 .graph-lane-label { fill: var(--text-3); font: 500 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
 
 .graph-edge { fill: none; stroke: var(--border-strong); stroke-width: 1.15; vector-effect: non-scaling-stroke; transition: stroke 360ms var(--ease), opacity 360ms var(--ease), filter 360ms var(--ease); }
@@ -158,8 +159,13 @@ svg { display: block; }
 .graph-node.provisional .place-card { border-color: color-mix(in oklch, var(--declared) 55%, var(--border)); border-style: dashed; background: color-mix(in oklch, var(--surface) 82%, transparent); box-shadow: 0 0 20px color-mix(in oklch, var(--declared) 10%, transparent); }
 .graph-node.unconfirmed { opacity: .72; }
 .graph-node.unconfirmed .place-card { border-color: var(--border-strong); border-style: dashed; box-shadow: none; }
-.graph-node.birth { animation: node-birth 500ms var(--ease-out) both; transform-box: fill-box; transform-origin: left top; }
-@keyframes node-birth { from { opacity: 0; transform: scale(.965); } }
+/* Birth must scale in place: a CSS transform on the positioned <g> would override its
+   translate attribute and fly the card in from the canvas origin, so the group only
+   fades while the HTML card inside carries the scale. */
+.graph-node.birth { animation: node-fade 500ms var(--ease-out) both; }
+@keyframes node-fade { from { opacity: 0; } }
+.graph-node.birth .place-card { animation: node-birth 500ms var(--ease-out) both; transform-origin: left top; }
+@keyframes node-birth { from { transform: scale(.965); } }
 .place-card-foreign { overflow: visible; }
 .place-card { width: 100%; height: 100%; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); transition: border-color 420ms var(--ease), box-shadow 420ms var(--ease), opacity 420ms var(--ease); }
 .graph-node:hover .place-card, .graph-node:focus-visible .place-card, .graph-node.selected .place-card { border-color: var(--border-strong); }

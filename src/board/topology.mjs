@@ -193,6 +193,7 @@ function eventSummary(event) {
 }
 
 function observedVerb(event) {
+  if (isTitleOrNameChange(event)) return 'Renamed'
   const action = event.kind.split('.').at(-1)
   return ({
     created: 'Created',
@@ -206,6 +207,7 @@ function observedVerb(event) {
 }
 
 function claimedVerb(event) {
+  if (isTitleOrNameChange(event)) return 'Renaming…'
   if (event.kind.endsWith('.call')) return 'Calling…'
   const first = eventSummary(event).split(/\s+/)[0]?.toLowerCase()
   return ({
@@ -215,10 +217,17 @@ function claimedVerb(event) {
     edit: 'Editing…',
     inspect: 'Inspecting…',
     restore: 'Restoring…',
+    rename: 'Renaming…',
     set: 'Setting…',
     trash: 'Trashing…',
     update: 'Updating…',
   })[first] || 'Changing…'
+}
+
+function isTitleOrNameChange(event) {
+  const properties = event?.data?.changedProperties || event?.state?.changedProperties
+  if (!Array.isArray(properties) || !properties.length) return false
+  return properties.every(property => ['title', 'name'].includes(text(property).toLowerCase()))
 }
 
 function stateData(event) {
@@ -231,6 +240,7 @@ function stateData(event) {
     beforeType: data.beforeType || null,
     afterType: data.afterType || data.valueType || null,
     metaKey: data.metaKey || null,
+    changedProperties: Array.isArray(data.changedProperties) ? data.changedProperties : [],
   }
 }
 
@@ -761,6 +771,19 @@ export function layoutSiteTopology(topology, options = {}) {
     const entries = groups.get(category)
     const empty = entries.every(node => node.future)
     if (compact) {
+      const firstY = padY + nodeH + gapY + compactIndex * (nodeH + gapY)
+      if (!empty) lanes.push({
+        id: `lane:${category}`,
+        category,
+        compact: true,
+        empty: false,
+        x: padX,
+        y: firstY - 16,
+        width: nodeW,
+        height: 0,
+        labelX: padX,
+        labelY: firstY - 10,
+      })
       entries.forEach(node => placed.push({ ...node, x: padX, y: padY + nodeH + gapY + compactIndex++ * (nodeH + gapY), depth: rank + 1 }))
       continue
     }

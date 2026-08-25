@@ -220,6 +220,16 @@ test('renamable places use the latest observed name at each playhead', () => {
   const restored = buildSiteTopology(events)
   assert.equal(restored.nodes[0].title, 'Home')
   assert.deepEqual(restored.nodes[0].changes.map(change => change.state.title), ['Home', 'Home — Aphelion live run', 'Home'])
+  assert.deepEqual(restored.nodes[0].changes.map(change => change.verb), ['Renamed', 'Renamed', 'Renamed'])
+})
+
+test('title and name changes use rename verbs without changing other updates', () => {
+  const declaration = event(1, 'agent.action.declared', { requestId: 'rename', objectType: 'page', objectId: 339, changedProperties: ['title'], summary: 'Update the page title', channel: 'wp-cli' })
+  const renamed = event(2, 'wp.post.updated', { requestId: 'rename', objectType: 'post', objectId: 339, postType: 'page', title: 'Home — Aphelion live run', changedProperties: ['title'], channel: 'wp-cli' })
+  const updated = event(3, 'wp.post.updated', { requestId: 'content', objectType: 'post', objectId: 339, postType: 'page', title: 'Home — Aphelion live run', changedProperties: ['content'], channel: 'wp-cli' })
+
+  assert.equal(buildSiteTopology([declaration]).nodes[0].changes[0].verb, 'Renaming…')
+  assert.deepEqual(buildSiteTopology([declaration, renamed, updated]).nodes[0].changes.map(change => change.verb), ['Renamed', 'Updated'])
 })
 
 test('desktop site layout uses append-stable category lanes', () => {
@@ -230,6 +240,7 @@ test('desktop site layout uses append-stable category lanes', () => {
   const layoutSeed = { desktopWrapColumns: 4 }
   const first = layoutSiteTopology(buildSiteTopology(events.slice(0, 18)), { layoutSeed })
   const final = layoutSiteTopology(buildSiteTopology(events), { layoutSeed })
+  const compact = layoutSiteTopology(buildSiteTopology(events), { compact: true, layoutSeed })
   const finalPositions = new Map(final.nodes.map(node => [node.id, `${node.x}:${node.y}`]))
   const content = final.nodes.slice(1)
 
@@ -237,4 +248,5 @@ test('desktop site layout uses append-stable category lanes', () => {
   assert.equal(new Set(content.map(node => node.x)).size, 4)
   assert.equal(new Set(content.map(node => node.y)).size, 5)
   for (const node of first.nodes) assert.equal(`${node.x}:${node.y}`, finalPositions.get(node.id))
+  assert.deepEqual(compact.lanes.map(lane => [lane.category, lane.compact]), [['content', true]])
 })
