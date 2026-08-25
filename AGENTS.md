@@ -11,6 +11,8 @@ Read `PRODUCT.md`. It defines the product, the phases, and eight design principl
 | Path | What it is |
 |---|---|
 | `PRODUCT.md` | PRD / North Star — the why and what |
+| `PLAN.md` | The living component map (agenttrail convention) — maintain it as you work |
+| `docs/` | Build-level specs: `trail-format.md` (the core primitive), `observation-surfaces.md` (how we see WordPress) |
 | `upstream/agenttrail/` | Vendored MIT snapshot of sodiumsun/agenttrail (commit `41454d4`) — the code we adapt |
 | `knowledge/` | Working notes; `agenttrail-assessment.md` has the upstream code review and extension points |
 | `src/` | aphelion's own code (does not exist yet — first real build item) |

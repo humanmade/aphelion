@@ -26,6 +26,8 @@ We never trust the agent's own account alone, and we never grade it either. We j
 
 Everything in aphelion is built on one primitive: an **append-only event log per session** — the trail. Agent hook events, file writes, runtime changes, plan updates, all timestamped and durable.
 
+The trail is a **product-owned format that aphelion writes and stores locally itself** (`docs/trail-format.md`). It is never a view over an agent's own session folder — those are transient, undocumented, and one cleanup away from gone. Events are captured into the trail at the moment they happen, whatever their source, so the record survives even when the agent's own artifacts don't. aphelion can always bring any past session back up.
+
 **Record once, render many.** Every surface is a projection of the trail:
 
 | Projection | What it is | Who it serves |
@@ -48,6 +50,10 @@ Half of what an agent does to a WordPress project lands in the database, not fil
 
 ### Phase 3 — Site-agent observability
 Shift the observed object from *repo* to *site*. Agents operating a site — editing content, optimizing pages, launching A/B tests — declare intent and leave observable effects, exactly like coding agents do. The board becomes the answer to "what is the AI doing to my site?", legible to the person who owns the site, not just the person who wrote the code.
+
+Agents reach sites through many channels — MCP servers and the Abilities API, the REST API, WP-CLI over SSH, even a driven browser in wp-admin. aphelion's answer is to observe at **WordPress's own hook layer**, via a tiny audit mu-plugin: every channel lands in the same actions and filters, so one observer catches them all, tagged with the channel it came through. Client-side taps (agent hooks, an MCP tap) add the *declared* half — the intent behind each call. The channels and taps are detailed in `docs/observation-surfaces.md`.
+
+This phase also makes **liveness** first-class: not just what an agent did, but that one is connected *right now* — an open MCP session, an active WP-CLI run over SSH, a burst of authenticated REST writes — surfaced as presence on the board.
 
 Site-side signals arrive through **adapters**: the core stays agnostic to which agent and which plugins are in play. [Altis Accelerate](https://github.com/humanmade/altis-accelerate) is the first adapter — its experiments and analytics are the richest early source of "agent did something consequential to a site" events.
 
