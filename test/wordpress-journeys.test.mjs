@@ -16,6 +16,17 @@ function temporary(t) {
   return root
 }
 
+async function waitForTrailEvent(trailPath, predicate, description, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const events = await readTrail(trailPath)
+    const event = events.find(predicate)
+    if (event) return event
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+  throw new Error(`Timed out waiting for ${description}`)
+}
+
 test('block/page journeys retain block property subchanges without content values', () => {
   const projection = projectEvents(sequenced(wordpressJourneys.blockPageEdit.events))
   const action = projection.wordpress.actions.find(item => item.kind === 'wp.post.updated')
@@ -163,11 +174,23 @@ test('WP-CLI sidecar retries after disconnect and fingerprints settings instead 
   })
   t.after(() => daemon.close('test-cleanup'))
 
-  await new Promise(resolve => setTimeout(resolve, 620))
+  await waitForTrailEvent(
+    daemon.trailPath,
+    event => event.kind === 'presence.error' && event.data.channel === 'wp-cli',
+    'the initial WP-CLI disconnect',
+  )
   fs.writeFileSync(marker, 'aphelion-test-v1')
-  await new Promise(resolve => setTimeout(resolve, 720))
+  await waitForTrailEvent(
+    daemon.trailPath,
+    event => event.kind === 'runtime.baseline' && event.data.optionNames.includes('blogname'),
+    'the first WordPress runtime baseline',
+  )
   fs.writeFileSync(marker, 'aphelion-test-v2')
-  await new Promise(resolve => setTimeout(resolve, 720))
+  const changed = await waitForTrailEvent(
+    daemon.trailPath,
+    event => event.kind === 'runtime.option.changed' && event.data.name === 'blogname',
+    'the blogname fingerprint change',
+  )
   await daemon.close('test')
 
   const events = await readTrail(daemon.trailPath)
@@ -176,8 +199,6 @@ test('WP-CLI sidecar retries after disconnect and fingerprints settings instead 
   assert.ok(events.some(event => event.kind === 'presence.ready' && event.data.channel === 'wp-cli'))
   assert.equal(events.filter(event => event.source === 'sidecar' && event.kind === 'presence.heartbeat').length, 0)
   assert.ok(events.some(event => event.kind === 'runtime.baseline' && event.data.optionNames.includes('blogname')))
-  const changed = events.find(event => event.kind === 'runtime.option.changed' && event.data.name === 'blogname')
-  assert.ok(changed)
   assert.equal(changed.data.changed, true)
   assert.match(changed.data.beforeFingerprint, /^[a-f0-9]{16}$/)
   assert.match(changed.data.afterFingerprint, /^[a-f0-9]{16}$/)

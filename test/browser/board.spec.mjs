@@ -54,6 +54,19 @@ test('v3 keeps the map quiet while cards and inspector retain the evidence', asy
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
   await page.goto(daemon.url)
 
+  const wordmarkFont = await page.locator('.brand-word').evaluate(async element => {
+    await document.fonts.ready
+    const faces = await document.fonts.load('15px "Geist Pixel"', element.textContent)
+    return {
+      family: getComputedStyle(element).fontFamily,
+      loaded: document.fonts.check('15px "Geist Pixel"'),
+      faces: faces.length,
+    }
+  })
+  expect(wordmarkFont.family).toMatch(/^"Geist Pixel"/)
+  expect(wordmarkFont.loaded).toBe(true)
+  expect(wordmarkFont.faces).toBeGreaterThan(0)
+
   const chrome = await page.locator('.chrome-bar').boundingBox()
   expect(chrome.height).toBeLessThanOrEqual(48)
   await expect(page.locator('.session-rail, .evidence-ledger, .current-brief, .presence-panel, .wordpress-panel')).toHaveCount(0)
@@ -203,4 +216,6 @@ test('reduced motion preserves state without continuous energy', async ({ page }
   await expect(page.locator('.energy-particle')).toBeHidden()
   await expect(page.locator('.graph-node.site')).toBeVisible()
   expect(parseFloat(await page.locator('.graph-node.site').evaluate(element => getComputedStyle(element).transitionDuration))).toBeLessThanOrEqual(.001)
+  const brandAnimations = await page.locator('.brand-mark').evaluate(mark => [...mark.querySelectorAll('.bm, .bd')].map(element => getComputedStyle(element).animationName))
+  expect(brandAnimations.every(name => name === 'none')).toBe(true)
 })

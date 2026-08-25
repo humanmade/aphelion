@@ -236,6 +236,7 @@ const actionForms = {
   trash: ['Trashed', 'Trashing'],
   change: ['Changed', 'Changing'],
   set: ['Set', 'Setting'],
+  call: ['Called', 'Calling'],
 }
 
 function actionPhrase(summary, tense = 'past') {
@@ -442,7 +443,11 @@ function renderComponents(model, topology = currentTopology(model)) {
   const gapX = compact ? 38 : 112
   const gapY = compact ? 28 : 38
   const padX = compact ? 24 : 42
-  const padY = compact ? 56 : 44
+  const edgeLabelStep = 17
+  const labelCounts = new Map()
+  for (const edge of graphEdges) if (edge.label) labelCounts.set(edge.to, (labelCounts.get(edge.to) || 0) + 1)
+  const maxLabelStack = Math.max(0, ...labelCounts.values())
+  const padY = compact ? 56 : Math.max(44, 26 + Math.max(0, maxLabelStack - 1) * edgeLabelStep)
   const metrics = Object.fromEntries(graphNodes.map(item => [item.id, { w: nodeW, h: cardHeight(item) }]))
   const planNodes = graphNodes.filter(item => item.group === 'plan')
   const siteNodes = graphNodes.filter(item => item.group === 'site')
@@ -512,13 +517,13 @@ function renderComponents(model, topology = currentTopology(model)) {
       world.append(hit)
     }
     if (edge.label && !edge.future) {
+      const vertical = Math.abs(from.x - to.x) < 30 || compact
       const labelX = vertical ? to.x + nodeW / 2 + edge.laneOffset : (from.x + nodeW + to.x) / 2
       const labelYBase = vertical ? to.y - 12 : to.y - 10
       const labelKey = `${Math.round(labelX / 48)}:${Math.round(labelYBase / 24)}`
       const stacked = labelStacks.get(labelKey) || 0
       labelStacks.set(labelKey, stacked + 1)
-      const vertical = Math.abs(from.x - to.x) < 30 || compact
-      world.append(svgNode('text', { class: `graph-edge-label${edge.active ? ' active' : ''}`, x: labelX, y: labelYBase - stacked * 13, 'text-anchor': 'middle' }, edge.label.slice(0, 30)))
+      world.append(svgNode('text', { class: `graph-edge-label${edge.active ? ' active' : ''}`, x: labelX, y: labelYBase - stacked * edgeLabelStep, 'text-anchor': 'middle' }, edge.label.slice(0, 30)))
     }
     if (edge.claim && !edge.future) world.append(svgNode('text', { class: 'graph-flow-claim', x: to.x + 14, y: to.y - 28 }, edge.claim.length > 48 ? `${edge.claim.slice(0, 47)}…` : edge.claim))
     if (edge.active && !edge.future) {

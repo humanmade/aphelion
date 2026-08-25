@@ -9,8 +9,13 @@ const CORE_OPTIONS = {
   page_on_front: 'Homepage',
   show_on_front: 'Homepage display',
 }
+const BOOKKEEPING_OPTIONS = new Set(['cron', 'category_children', 'rewrite_rules', 'recently_edited'])
 
 const text = value => String(value ?? '').trim()
+const isBookkeepingOption = value => {
+  const name = text(value)
+  return name.startsWith('_transient_') || name.startsWith('_site_transient_') || BOOKKEEPING_OPTIONS.has(name)
+}
 const titleCase = value => text(value)
   .replace(/^_+/, '')
   .replace(/^yoast_wpseo_/, '')
@@ -57,6 +62,7 @@ export function resolveTopologyEntity(event) {
 
   const optionName = data.option || (rawType === 'option' ? data.name ?? data.id : null)
   if (optionName !== undefined && optionName !== null && text(optionName)) {
+    if (isBookkeepingOption(optionName)) return null
     return {
       key: `wp:option:${text(optionName)}`,
       identity: text(optionName),
@@ -170,6 +176,7 @@ function observedVerb(event) {
 }
 
 function claimedVerb(event) {
+  if (event.kind.endsWith('.call')) return 'Calling…'
   const first = eventSummary(event).split(/\s+/)[0]?.toLowerCase()
   return ({
     change: 'Changing…',

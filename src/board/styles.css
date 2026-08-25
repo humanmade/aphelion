@@ -92,7 +92,7 @@ svg { display: block; }
   74% { transform: translate(.5px, -.5px); }
   88%, 100% { transform: translate(0, 0); }
 }
-@media (prefers-reduced-motion: reduce) { .brand-mark .bm, .brand-mark .bd { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .brand-mark .bm, .brand-mark .bm .bd { animation: none !important; } }
 .brand-word { font-family: "Geist Pixel", var(--mono, ui-monospace, monospace); font-size: 15px; font-weight: 400; letter-spacing: .02em; color: var(--text); }
 
 .session-control { min-width: 0; }

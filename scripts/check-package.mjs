@@ -4,7 +4,7 @@ import path from 'node:path'
 const root = path.resolve(import.meta.dirname, '..')
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const failures = []
-const requiredFiles = ['assets/aphelion-board.png', 'bin/aphelion.mjs', 'public/index.html', 'types/index.d.ts', 'docs/README.md', 'docs/background-service.md', 'CHANGELOG.md', 'README.md', 'RELEASING.md', 'SECURITY.md', 'LICENSE']
+const requiredFiles = ['assets/aphelion-board.jpg', 'bin/aphelion.mjs', 'public/index.html', 'types/index.d.ts', 'docs/README.md', 'docs/background-service.md', 'CHANGELOG.md', 'README.md', 'RELEASING.md', 'SECURITY.md', 'LICENSE']
 
 if (pkg.name !== 'aphelion') failures.push('package name must be aphelion')
 if ('private' in pkg) failures.push('publish-ready package must not set private')

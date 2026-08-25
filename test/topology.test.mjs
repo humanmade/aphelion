@@ -70,6 +70,17 @@ test('bare connection lifecycle changes edge state without creating spatial node
   assert.equal(topology.edges.length, 0)
 })
 
+test('historic WordPress bookkeeping options never become durable places', () => {
+  const topology = buildSiteTopology([
+    event(1, 'wp.option.updated', { objectType: 'option', name: '_transient_doing_cron', channel: 'wp-cli' }),
+    event(2, 'wp.option.created', { objectType: 'option', name: 'category_children', channel: 'wp-cli' }),
+    event(3, 'wp.option.updated', { objectType: 'option', name: 'blogname', channel: 'wp-cli' }),
+  ])
+
+  assert.deepEqual(topology.nodes.map(node => node.id), ['wp:option:blogname'])
+  assert.deepEqual(topology.edges.map(edge => edge.to), ['wp:option:blogname'])
+})
+
 test('declared work is in flight before presence makes its reusable edge live', () => {
   const declared = event(1, 'agent.action.declared', { requestId: 'inspect', objectType: 'option', option: 'permalink_structure', channel: 'mcp', transport: 'stdio' })
   const opened = event(2, 'presence.open', { requestId: 'inspect', connectionId: 'inspect', channel: 'mcp', transport: 'stdio' })

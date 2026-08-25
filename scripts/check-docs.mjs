@@ -39,7 +39,7 @@ for (const relativeFile of publicDocs) {
 const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
 const readmeContracts = [
   ['install command', 'npm install --global aphelion'],
-  ['product screenshot', 'assets/aphelion-board.png'],
+  ['product screenshot', 'assets/aphelion-board.jpg'],
   ['quickstart', '## Quickstart'],
   ['automatic-run guidance', '## Run automatically'],
   ['background guide', 'docs/background-service.md'],

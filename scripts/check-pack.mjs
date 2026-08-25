@@ -7,7 +7,7 @@ if (result.status !== 0) {
 }
 const report = JSON.parse(result.stdout)[0]
 const names = report.files.map(file => file.path)
-const required = ['assets/aphelion-board.png', 'bin/aphelion.mjs', 'public/index.html', 'src/index.mjs', 'src/mu-plugin/aphelion-audit.php', 'types/index.d.ts', 'docs/README.md', 'docs/background-service.md', 'docs/trail-format.md', 'docs/observation-surfaces.md', 'CHANGELOG.md', 'README.md', 'RELEASING.md', 'SECURITY.md', 'LICENSE']
+const required = ['assets/aphelion-board.jpg', 'bin/aphelion.mjs', 'public/index.html', 'src/index.mjs', 'src/mu-plugin/aphelion-audit.php', 'types/index.d.ts', 'docs/README.md', 'docs/background-service.md', 'docs/trail-format.md', 'docs/observation-surfaces.md', 'CHANGELOG.md', 'README.md', 'RELEASING.md', 'SECURITY.md', 'LICENSE']
 const forbiddenRoots = ['.aphelion/', 'test/', 'upstream/', 'knowledge/', 'graphify-out/', 'qa-artifacts/', 'prd/']
 const forbiddenFiles = new Set(['PRODUCT.md', 'BUILD-PLAN.md', 'DESIGN.md', 'HYPERFRAMES.md', 'QA_REPORT.md', 'PRD.md'])
 const forbidden = names.filter(name => forbiddenRoots.some(root => name.startsWith(root)) || forbiddenFiles.has(name) || name.endsWith('-PRD.md'))
