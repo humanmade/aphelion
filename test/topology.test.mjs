@@ -120,6 +120,48 @@ test('post metadata and content edits resolve onto the same durable content noun
   assert.deepEqual(topology.nodes[0].plugins, ['yoast-seo'])
 })
 
+test('revision and autosave cascades remain member evidence on their parent place', () => {
+  const events = [
+    event(1, 'session.start', { target: 'http://localhost:8081', topologyVersion: 2 }, 'session'),
+    event(2, 'wp.option.updated', { requestId: 'tagline', objectType: 'option', name: 'blogdescription', channel: 'wp-cli' }),
+    event(3, 'wp.option.updated', { requestId: 'accelerate', objectType: 'option', name: 'accelerate_outbound_tracking_enabled', channel: 'wp-cli' }),
+    event(4, 'wp.post.created', { requestId: 'create', objectType: 'post', objectId: 476, postType: 'post', title: 'Scratch post', channel: 'wp-cli' }),
+    event(5, 'wp.term.created', { requestId: 'term', objectType: 'term', objectId: 51, title: 'QA', channel: 'wp-cli' }),
+    event(6, 'wp.post.updated', { requestId: 'rename', objectType: 'post', objectId: 339, postType: 'page', title: 'Home', channel: 'wp-cli' }),
+    event(7, 'wp.post.updated', { requestId: 'edit', objectType: 'post', objectId: 476, postType: 'post', title: 'Scratch post', changedProperties: ['content'], channel: 'wp-cli' }),
+    event(8, 'wp.post.trashed', { requestId: 'trash', objectType: 'post', objectId: 476, postType: 'post', title: 'Scratch post', channel: 'wp-cli' }),
+    event(9, 'wp.post.deleted', { requestId: 'delete', objectType: 'post', objectId: 477, postType: 'revision', post_parent: 476, title: 'Scratch post', channel: 'wp-cli' }),
+    event(10, 'wp.post.deleted', { requestId: 'delete', objectType: 'post', objectId: 476, postType: 'post', title: 'Scratch post', channel: 'wp-cli' }),
+    event(11, 'wp.post.deleted', { requestId: 'unknown-revision', objectType: 'post', objectId: 999, postType: 'autosave', title: 'Unknown autosave', channel: 'wp-cli' }),
+  ]
+  const topology = buildSiteTopology(events)
+  const scratch = topology.nodes.find(node => node.id === 'wp:post:476')
+
+  assert.equal(topology.root.objectCount, 5)
+  assert.equal(topology.nodes.some(node => node.id === 'wp:post:477' || node.id === 'wp:post:999'), false)
+  assert.ok(scratch.history.some(item => item.kind === 'wp.post.deleted' && item.summary === 'Revision deleted'))
+  assert.equal(resolveTopologyEntity(events[8]).key, 'wp:post:476')
+  assert.equal(resolveTopologyEntity(events[10]), null)
+})
+
+test('semantic adapter evidence replaces its raw effect on the card without deleting either event', () => {
+  const toggle = (seq, requestId) => [
+    event(seq, 'wp.option.updated', { requestId, objectType: 'option', name: 'accelerate_outbound_tracking_enabled', channel: 'wp-cli' }),
+    event(seq + 1, 'adapter.accelerate.changed', { requestId, objectType: 'option', name: 'accelerate_outbound_tracking_enabled', channel: 'wp-cli', adapter: 'altis-accelerate', rawKind: 'wp.option.updated', summary: 'Accelerate changed outbound tracking' }, 'adapter'),
+  ]
+  const place = buildSiteTopology([...toggle(1, 'toggle-on'), ...toggle(3, 'toggle-off')]).nodes[0]
+
+  assert.equal(place.changes.length, 2)
+  assert.deepEqual(place.changes.map(change => change.confirmation.kind), ['adapter.accelerate.changed', 'adapter.accelerate.changed'])
+  assert.deepEqual(place.changes.map(change => change.confirmations.map(item => item.kind)), [
+    ['wp.option.updated', 'adapter.accelerate.changed'],
+    ['wp.option.updated', 'adapter.accelerate.changed'],
+  ])
+  assert.equal(groupTopologyChanges(place.changes).length, 1)
+  assert.equal(groupTopologyChanges(place.changes)[0].length, 2)
+  assert.deepEqual(place.history.map(item => item.kind), ['wp.option.updated', 'adapter.accelerate.changed', 'wp.option.updated', 'adapter.accelerate.changed'])
+})
+
 test('editing and restoring one setting relights one option node and one channel edge', () => {
   const events = [
     event(1, 'agent.action.declared', { requestId: 'edit', objectType: 'option', option: 'blogdescription', channel: 'wp-cli', transport: 'docker-exec', summary: 'Temporarily edit site tagline' }),
@@ -296,6 +338,7 @@ test('deleted content and site identity remain owner-readable at the playhead', 
   assert.equal(topology.root.title, 'Accelerate Demo')
   assert.deepEqual(topology.nodes.map(node => node.stateLine), ['Deleted · 1 block', 'Deleted'])
   assert.equal(topology.nodes.some(node => node.stateLine === 'Content'), false)
+  assert.equal(buildSiteTopology([event(1, 'session.start', { target: 'http://localhost:8081', topologyVersion: 2 }, 'session')]).root.title, 'localhost:8081')
 })
 
 test('renamable places use the latest observed name at each playhead', () => {

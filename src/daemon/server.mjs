@@ -137,6 +137,7 @@ export async function startDaemon(options = {}) {
     broadcast(start)
     append('plan', 'plan.snapshot', plan)
     append('watcher', 'repo.snapshot', repository)
+    stopSidecar.sessionStarted?.()
     armIdleTimer()
   }
 

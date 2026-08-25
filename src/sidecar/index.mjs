@@ -85,6 +85,7 @@ export function startSidecar(options) {
   let wpReady = false
   let polling = false
   let lastWpHeartbeat = 0
+  let identityPending = false
   const heartbeats = new Map()
 
   const emitWithAdapter = (source, kind, data, eventOptions) => {
@@ -153,12 +154,10 @@ export function startSidecar(options) {
         })
         lastWpHeartbeat = Date.now()
       }
-      if (!baselineWritten) {
+      const firstBaseline = !baselineWritten
+      if (firstBaseline) {
         for (const [name, value] of Object.entries(snapshot)) previousOptions.set(name, { fingerprint: fingerprint(value) })
         emit('sidecar', 'runtime.baseline', { ...snapshotSummary(snapshot), channel: 'wp-cli', transport: options.transport || 'process' })
-        if (typeof snapshot.blogname === 'string' && snapshot.blogname.trim()) {
-          emit('sidecar', 'runtime.site.identity', { siteName: snapshot.blogname.trim(), channel: 'wp-cli', transport: options.transport || 'process' })
-        }
         baselineWritten = true
       } else {
         for (const [name, value] of Object.entries(snapshot)) {
@@ -180,6 +179,10 @@ export function startSidecar(options) {
           }
         }
       }
+      if ((firstBaseline || identityPending) && typeof snapshot.blogname === 'string' && snapshot.blogname.trim()) {
+        emit('sidecar', 'runtime.site.identity', { siteName: snapshot.blogname.trim(), channel: 'wp-cli', transport: options.transport || 'process' })
+      }
+      identityPending = false
       wpFailed = false
     } catch (error) {
       if (stopped) return
@@ -207,11 +210,17 @@ export function startSidecar(options) {
   audit(); debug(); pollRuntime()
   const timer = setInterval(() => { audit(); debug(); pollRuntime(); expireHeartbeats() }, intervalMs)
   timer.unref()
-  return () => {
+  const stop = () => {
     if (stopped) return
     stopped = true
     clearInterval(timer)
     audit(); debug()
     emit('sidecar', 'presence.close', { connectionId, actor: 'WordPress sidecar', channel: 'runtime', transport: 'filesystem' })
   }
+  stop.sessionStarted = () => {
+    if (stopped) return
+    identityPending = true
+    pollRuntime()
+  }
+  return stop
 }

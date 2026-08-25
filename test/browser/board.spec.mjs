@@ -9,6 +9,7 @@ let daemon
 let root
 const qaRoot = path.resolve('qa-artifacts/2026-08-25/work-order-g')
 const qaHRoot = path.resolve('qa-artifacts/2026-08-25/work-order-h')
+const qaIRoot = path.resolve('qa-artifacts/2026-08-25/work-order-i')
 const qaScreenshot = async (page, testInfo, name) => {
   fs.mkdirSync(qaRoot, { recursive: true })
   await page.screenshot({ path: path.join(qaRoot, `${name}-${testInfo.project.name}.png`) })
@@ -16,6 +17,10 @@ const qaScreenshot = async (page, testInfo, name) => {
 const qaHScreenshot = async (page, testInfo, name) => {
   fs.mkdirSync(qaHRoot, { recursive: true })
   await page.screenshot({ path: path.join(qaHRoot, `${name}-${testInfo.project.name}.png`) })
+}
+const qaIScreenshot = async (page, testInfo, name) => {
+  fs.mkdirSync(qaIRoot, { recursive: true })
+  await page.screenshot({ path: path.join(qaIRoot, `${name}-${testInfo.project.name}.png`) })
 }
 
 test.beforeAll(async () => {
@@ -389,7 +394,7 @@ test('twenty places occupy stable category lanes with one resting channel label'
       columns: new Set(nodes.map(node => node.getAttribute('transform').match(/translate\(([-\d.]+)/)?.[1])).size,
       rows: new Set(nodes.map(node => node.getAttribute('transform').match(/\s([-\d.]+)\)/)?.[1])).size,
     }))
-    expect(gridShape).toEqual(page.viewportSize().width <= 680 ? { columns: 1, rows: 20 } : { columns: 4, rows: 5 })
+    expect(gridShape).toEqual(page.viewportSize().width <= 680 ? { columns: 1, rows: 20 } : { columns: 5, rows: 5 })
     await expect(page.locator('.graph-edge-label:not([hidden])')).toHaveCount(1)
     await expect(page.locator('.graph-edge-label:not([hidden])')).toHaveText('WP-CLI')
     if (page.viewportSize().width > 680) {
@@ -639,6 +644,110 @@ test('v2 sentence framing centers and contains the active target above the ceili
     expect(settledContained).toBe(true)
   } finally {
     await siteDaemon.close('camera-sentence-test')
+    fs.rmSync(trailRoot, { recursive: true, force: true })
+  }
+})
+
+test('wide-run projection keeps five nouns, semantic evidence, and a composed small map', async ({ page }, testInfo) => {
+  const trailRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-wide-run-'))
+  const siteDaemon = await startDaemon({ target: 'http://localhost:8081', targetType: 'site', trailDirectory: path.join(trailRoot, 'trails'), port: 6410, watch: false })
+  const ingest = event => fetch(`${siteDaemon.url}/ingest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(event) })
+  try {
+    const events = [
+      { source: 'sidecar', kind: 'runtime.site.identity', data: { siteName: 'Accelerate Demo', channel: 'wp-cli' } },
+      { source: 'wp', kind: 'wp.option.updated', data: { requestId: 'tagline', objectType: 'option', name: 'blogdescription', channel: 'wp-cli' } },
+      { source: 'wp', kind: 'wp.option.updated', data: { requestId: 'toggle-on', objectType: 'option', name: 'accelerate_outbound_tracking_enabled', channel: 'wp-cli' } },
+      { source: 'adapter', kind: 'adapter.accelerate.changed', data: { requestId: 'toggle-on', objectType: 'option', name: 'accelerate_outbound_tracking_enabled', adapter: 'altis-accelerate', rawKind: 'wp.option.updated', summary: 'Accelerate changed outbound tracking', channel: 'wp-cli' } },
+      { source: 'wp', kind: 'wp.option.updated', data: { requestId: 'toggle-off', objectType: 'option', name: 'accelerate_outbound_tracking_enabled', channel: 'wp-cli' } },
+      { source: 'adapter', kind: 'adapter.accelerate.changed', data: { requestId: 'toggle-off', objectType: 'option', name: 'accelerate_outbound_tracking_enabled', adapter: 'altis-accelerate', rawKind: 'wp.option.updated', summary: 'Accelerate changed outbound tracking', channel: 'wp-cli' } },
+      { source: 'wp', kind: 'wp.post.created', data: { requestId: 'create', objectType: 'post', objectId: 476, postType: 'post', title: 'Aphelion wide-run scratch', channel: 'wp-cli' } },
+      { source: 'wp', kind: 'wp.post.updated', data: { requestId: 'edit', objectType: 'post', objectId: 476, postType: 'post', title: 'Aphelion wide-run scratch', changedProperties: ['content'], channel: 'wp-cli' } },
+      { source: 'wp', kind: 'wp.post.trashed', data: { requestId: 'trash', objectType: 'post', objectId: 476, postType: 'post', title: 'Aphelion wide-run scratch', channel: 'wp-cli' } },
+      { source: 'wp', kind: 'wp.post.deleted', data: { requestId: 'delete', objectType: 'post', objectId: 477, postType: 'revision', post_parent: 476, title: 'Aphelion wide-run scratch', channel: 'wp-cli' } },
+      { source: 'wp', kind: 'wp.post.deleted', data: { requestId: 'delete', objectType: 'post', objectId: 476, postType: 'post', title: 'Aphelion wide-run scratch', channel: 'wp-cli' } },
+      { source: 'wp', kind: 'wp.term.created', data: { requestId: 'term-create', objectType: 'term', objectId: 51, title: 'Aphelion QA', channel: 'wp-cli' } },
+      { source: 'wp', kind: 'wp.term.deleted', data: { requestId: 'term-delete', objectType: 'term', objectId: 51, title: 'Aphelion QA', channel: 'wp-cli' } },
+      { source: 'wp', kind: 'wp.post.updated', data: { requestId: 'rename', objectType: 'post', objectId: 339, postType: 'page', title: 'Home', changedProperties: ['title'], actor: 'WordPress sidecar', channel: 'wp-cli' } },
+    ]
+    for (const event of events) await ingest(event)
+    await page.goto(siteDaemon.url)
+    await expect(page.locator('.graph-node.entity')).toHaveCount(5)
+    await expect(page.locator('[data-node-id="wp:post:477"]')).toHaveCount(0)
+    await expect(page.locator('[data-node-id="wp:site"] .place-state')).toContainText('5 places touched')
+    const accelerate = page.locator('[data-node-id="wp:option:accelerate_outbound_tracking_enabled"]')
+    await expect(accelerate.locator('.change-row')).toHaveCount(1)
+    await expect(accelerate.locator('.change-row')).toContainText('2 changes')
+
+    await accelerate.click()
+    await expect(page.locator('#place-panel .inspector-change')).toHaveCount(2)
+    const evidence = await page.locator('#place-panel .inspector-change').allTextContents()
+    expect(evidence.every(row => row.includes('wp.option.updated') && row.includes('adapter.accelerate.changed'))).toBe(true)
+    await page.locator('#inspector-close').click()
+    await expect(page.locator('#inspector')).toHaveAttribute('aria-hidden', 'true')
+    await page.waitForTimeout(350)
+
+    const geometry = await page.evaluate(() => {
+      const position = id => {
+        const matrix = document.querySelector(`[data-node-id="${id}"]`).transform.baseVal.consolidate().matrix
+        return { x: matrix.e, y: matrix.f }
+      }
+      const labels = [...document.querySelectorAll('.graph-edge-label:not([hidden])')]
+      const canvas = document.querySelector('.map-surface').getBoundingClientRect()
+      const clippedLabels = labels.filter(label => { const rect = label.getBoundingClientRect(); return rect.left < canvas.left - 1 || rect.right > canvas.right + 1 }).length
+      const territory = document.querySelector('.territory-region[data-territory="plugins"] .graph-lane-label').getBoundingClientRect()
+      const plugin = document.querySelector('[data-plugin-region="altis-accelerate"] .graph-lane-label').getBoundingClientRect()
+      const overlaps = !(territory.right <= plugin.left || plugin.right <= territory.left || territory.bottom <= plugin.top || plugin.bottom <= territory.top)
+      return { root: position('wp:site'), post: position('wp:post:476'), page: position('wp:post:339'), term: position('wp:term:51'), plugin: position('wp:option:accelerate_outbound_tracking_enabled'), setting: position('wp:option:blogdescription'), clippedLabels, overlaps }
+    })
+    expect(geometry.clippedLabels).toBe(0)
+    expect(geometry.overlaps).toBe(false)
+    if (testInfo.project.name === 'desktop') {
+      expect(geometry.root.y).toBe(geometry.post.y)
+      expect(geometry.root.y).toBe(geometry.page.y)
+      expect(geometry.term.y).toBe(geometry.plugin.y)
+      expect(geometry.setting.y).toBe(geometry.term.y)
+      expect(geometry.term.x).toBeLessThan(geometry.plugin.x)
+      expect(geometry.plugin.x).toBeLessThan(geometry.setting.x)
+      const caption = page.locator('.playback-caption')
+      await expect(caption).toContainText('Sidecar · WP-CLI → Home')
+      expect(await caption.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+    }
+    await qaIScreenshot(page, testInfo, '5-place-wide-run')
+  } finally {
+    await siteDaemon.close('wide-run-test')
+    fs.rmSync(trailRoot, { recursive: true, force: true })
+  }
+})
+
+test('twenty content places form an append-stable balanced block', async ({ page }, testInfo) => {
+  test.slow()
+  const trailRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-composition-20-'))
+  const siteDaemon = await startDaemon({ target: 'http://localhost:8081', targetType: 'site', trailDirectory: path.join(trailRoot, 'trails'), port: 6420, watch: false })
+  const ingest = index => fetch(`${siteDaemon.url}/ingest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source: 'wp', kind: 'wp.post.updated', data: { requestId: `page-${index}`, objectType: 'post', objectId: index, postType: 'page', title: `Composition page ${index}`, status: 'publish', channel: 'wp-cli' } }) })
+  try {
+    for (let index = 1; index <= 18; index++) await ingest(index)
+    await page.goto(siteDaemon.url)
+    const before = await page.locator('.graph-node').evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.dataset.nodeId, node.getAttribute('transform')])))
+    await ingest(19)
+    await ingest(20)
+    await expect(page.locator('.graph-node.entity')).toHaveCount(20)
+    const live = await page.locator('.graph-node').evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.dataset.nodeId, node.getAttribute('transform')])))
+    for (const [id, transform] of Object.entries(before)) expect(live[id]).toBe(transform)
+    if (testInfo.project.name === 'desktop') {
+      const positions = await page.locator('.graph-node').evaluateAll(nodes => nodes.map(node => {
+        const matrix = node.transform.baseVal.consolidate().matrix
+        return { x: matrix.e, y: matrix.f }
+      }))
+      expect(new Set(positions.map(item => item.x)).size).toBe(5)
+      expect(new Set(positions.map(item => item.y)).size).toBe(5)
+    }
+    await page.getByRole('tab', { name: 'Replay' }).click()
+    const replay = await page.locator('.graph-node').evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.dataset.nodeId, node.getAttribute('transform')])))
+    expect(replay).toEqual(live)
+    if (testInfo.project.name === 'desktop') expect(await page.locator('.playback-caption').evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+    await qaIScreenshot(page, testInfo, '20-place-balanced')
+  } finally {
+    await siteDaemon.close('composition-20-test')
     fs.rmSync(trailRoot, { recursive: true, force: true })
   }
 })

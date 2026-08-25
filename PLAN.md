@@ -52,6 +52,8 @@ files: [src/board/**]
   from: containment model
 - [x] Contain the active sentence, retain homogeneous run verbs, and fix territory order {#board-framing-language}
   from: live QA
+- [x] Fold revision evidence, deduplicate semantic confirmations, preserve rotated site identity, and compose small maps {#board-wide-run-correctness}
+  from: wide-run QA
 
 ## Replay any session {#replay}
 tech: scrub UI over trail; sparse snapshot index for seeking

@@ -59,7 +59,7 @@ svg { display: block; }
 .skip-link:focus { transform: translateY(0); }
 
 .app-shell { width: 100%; height: 100dvh; min-height: 0; overflow: hidden; display: grid; grid-template-rows: var(--chrome) minmax(0, 1fr); background: var(--bg); }
-.chrome-bar { position: relative; z-index: 30; display: grid; grid-template-columns: auto minmax(148px, 224px) auto minmax(260px, 1fr) auto; align-items: center; gap: 10px; height: var(--chrome); padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--band); }
+.chrome-bar { position: relative; z-index: 30; display: grid; grid-template-columns: auto minmax(148px, 210px) auto minmax(420px, 1fr) auto; align-items: center; gap: 10px; height: var(--chrome); padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--band); }
 .brand { display: flex; align-items: center; gap: 8px; min-width: 102px; color: var(--text-2); }
 .brand-mark { width: 24px; height: 24px; overflow: visible; }
 /* Accelerate triangle ⇄ orb: each dot holds the triangle, glides to its orb
@@ -113,7 +113,7 @@ svg { display: block; }
 .mode-switch button:hover { color: var(--text); }
 .mode-switch button[aria-selected="true"] { background: var(--surface-raised); color: var(--text); }
 
-.playback-group { min-width: 0; display: grid; grid-template-columns: 28px minmax(80px, 1fr) auto minmax(90px, 190px); align-items: center; gap: 8px; }
+.playback-group { min-width: 0; display: grid; grid-template-columns: 28px minmax(80px, 1fr) auto minmax(260px, 440px); align-items: center; gap: 8px; }
 .play-button { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); cursor: pointer; }
 .play-button:hover:not(:disabled) { border-color: var(--border-strong); background: var(--surface-raised); }
 .play-button svg { grid-area: 1 / 1; width: 13px; height: 13px; fill: currentColor; }
@@ -564,7 +564,8 @@ function renderSessions(model) {
 
 function playbackCaption(model, topology, current) {
   if (topology?.focus?.place && topology?.focus?.edge) {
-    const actor = topology.focus.edge.actor || topology.focus.change.actor || 'Agent'
+    const rawActor = topology.focus.edge.actor || topology.focus.change.actor || 'Agent'
+    const actor = /^WordPress sidecar$/i.test(rawActor) ? 'Sidecar' : rawActor
     return `${actor} · ${displayChannel(topology.focus.edge.channel)} → ${topology.focus.place.title}`
   }
   if (current) return current.summary || summarizeEvent(current)
@@ -1374,6 +1375,7 @@ function inspectorChanges(changes, model) {
     entry.append(factList([
       ['Claim', change.claim?.summary || 'No declared claim'],
       ['Confirmation', change.confirmation?.summary || (change.status === 'in-flight' ? 'Awaiting WordPress' : 'No confirmation')],
+      ['Evidence', change.confirmations?.map(item => item.kind).join('\n')],
       ['Name at this change', change.state?.title || change.confirmation?.state?.title],
       ['Channel', displayChannel(change.channel)],
       ['Transport', change.transport || change.confirmation?.transport || change.claim?.transport],

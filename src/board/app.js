@@ -167,7 +167,8 @@ function renderSessions(model) {
 
 function playbackCaption(model, topology, current) {
   if (topology?.focus?.place && topology?.focus?.edge) {
-    const actor = topology.focus.edge.actor || topology.focus.change.actor || 'Agent'
+    const rawActor = topology.focus.edge.actor || topology.focus.change.actor || 'Agent'
+    const actor = /^WordPress sidecar$/i.test(rawActor) ? 'Sidecar' : rawActor
     return `${actor} · ${displayChannel(topology.focus.edge.channel)} → ${topology.focus.place.title}`
   }
   if (current) return current.summary || summarizeEvent(current)
@@ -977,6 +978,7 @@ function inspectorChanges(changes, model) {
     entry.append(factList([
       ['Claim', change.claim?.summary || 'No declared claim'],
       ['Confirmation', change.confirmation?.summary || (change.status === 'in-flight' ? 'Awaiting WordPress' : 'No confirmation')],
+      ['Evidence', change.confirmations?.map(item => item.kind).join('\n')],
       ['Name at this change', change.state?.title || change.confirmation?.state?.title],
       ['Channel', displayChannel(change.channel)],
       ['Transport', change.transport || change.confirmation?.transport || change.claim?.transport],

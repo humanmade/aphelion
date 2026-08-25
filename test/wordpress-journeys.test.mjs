@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { adaptAccelerateEvent, projectEvents, readTrail, startDaemon } from '../src/index.mjs'
+import { buildSiteTopology } from '../src/board/topology.mjs'
 import { journeyEvents, wordpressJourneys } from './fixtures/wordpress-journeys.mjs'
 
 function sequenced(events) {
@@ -204,6 +205,40 @@ test('WP-CLI sidecar retries after disconnect and fingerprints settings instead 
   assert.match(changed.data.beforeFingerprint, /^[a-f0-9]{16}$/)
   assert.match(changed.data.afterFingerprint, /^[a-f0-9]{16}$/)
   assert.equal('value' in changed.data, false)
+})
+
+test('WP-CLI sidecar re-observes site identity after idle session rotation', async t => {
+  const root = temporary(t)
+  const script = [
+    "const name = process.argv[process.argv.indexOf('get') + 1]",
+    "process.stdout.write(JSON.stringify(name === 'blogname' ? 'Accelerate Demo' : 'stable'))",
+  ].join(';')
+  const daemon = await startDaemon({
+    target: 'http://localhost:8081',
+    targetType: 'site',
+    trailDirectory: path.join(root, 'trails'),
+    wpCommand: [process.execPath, '-e', script, '--'],
+    sidecarInterval: 500,
+    idleTimeoutMs: 1_500,
+    port: 6200,
+    watch: false,
+  })
+  t.after(() => daemon.close('test-cleanup'))
+
+  const firstPath = daemon.trailPath
+  await waitForTrailEvent(firstPath, event => event.kind === 'runtime.site.identity', 'the first site identity')
+  await waitForTrailEvent(firstPath, event => event.kind === 'session.end', 'the idle session end')
+
+  const action = daemon.emit('wp', 'wp.option.updated', { requestId: 'after-rotation', objectType: 'option', name: 'blogdescription', channel: 'wp-cli' })
+  assert.ok(action)
+  assert.notEqual(daemon.trailPath, firstPath)
+  const secondPath = daemon.trailPath
+  await waitForTrailEvent(secondPath, event => event.kind === 'runtime.site.identity', 'the rotated session site identity')
+  const secondEvents = await readTrail(secondPath)
+
+  assert.equal(buildSiteTopology(secondEvents).root.title, 'Accelerate Demo')
+  assert.ok(secondEvents.some(event => event.kind === 'runtime.site.identity' && event.source === 'sidecar'))
+  await daemon.close('test')
 })
 
 test('fixture catalogue covers the requested WordPress journeys', () => {

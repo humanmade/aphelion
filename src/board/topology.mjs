@@ -29,6 +29,15 @@ const titleCase = value => text(value)
   .replace(/\b\w/g, character => character.toUpperCase())
   .replace(/\b(?:Seo|Wp|Cli|Mcp)\b/g, word => ({ Seo: 'SEO', Wp: 'WP', Cli: 'CLI', Mcp: 'MCP' })[word])
 
+const isRevisionEvent = event => {
+  const data = event?.data || {}
+  const objectType = text(data.objectType || data.type).toLowerCase().replaceAll('_', '-')
+  const postType = text(data.postType).toLowerCase().replaceAll('_', '-')
+  return ['post', 'post-meta', 'postmeta'].includes(objectType) && ['revision', 'autosave'].includes(postType)
+}
+
+const revisionParentId = data => data.post_parent ?? data.postParent ?? data.parentId ?? data.parent
+
 export function topologyEventClass(event) {
   if (!event?.kind) return null
   if (event.kind.startsWith('presence.')) return 'presence'
@@ -82,6 +91,20 @@ export function resolveTopologyEntity(event) {
   const data = event?.data || {}
   const rawType = text(data.objectType || data.type).toLowerCase().replaceAll('_', '-')
   const objectId = data.objectId ?? data.id
+
+  if (isRevisionEvent(event)) {
+    const parentId = revisionParentId(data)
+    if (parentId === undefined || parentId === null || parentId === '' || Number(parentId) === 0) return null
+    const type = text(data.parentPostType).toLowerCase() === 'page' ? 'page' : 'content'
+    return {
+      key: `wp:post:${parentId}`,
+      identity: String(parentId),
+      type,
+      category: 'content',
+      title: entityLabel(type, parentId, { ...data, title: null }),
+      plugin: data.plugin || null,
+    }
+  }
 
   if (objectId !== undefined && objectId !== null && ['page', 'post', 'post-meta', 'postmeta'].includes(rawType)) {
     const type = rawType === 'page' || data.postType === 'page' ? 'page' : rawType === 'post' && data.postType !== 'page' ? 'post' : 'content'
@@ -190,6 +213,7 @@ function actor(event) {
 function eventSummary(event) {
   const data = event.data || {}
   if (data.summary) return text(data.summary)
+  if (isRevisionEvent(event)) return `Revision ${event.kind.split('.').at(-1)}`
   if (event.kind.startsWith('wp.post_meta.')) return `${data.plugin ? `${titleCase(data.plugin)} ` : ''}metadata ${event.kind.split('.').at(-1)}`
   if (event.kind.startsWith('wp.post.')) return `${data.postType === 'page' ? 'Page' : 'Post'} ${event.kind.split('.').at(-1)}`
   if (event.kind.startsWith('wp.option.')) return `Setting ${event.kind.split('.').at(-1)}`
@@ -271,6 +295,7 @@ function changeRecords(history, sessionEnded = false) {
         requestId: item.requestId,
         claim,
         confirmation: null,
+        confirmations: [],
         verb: claimedVerb(item),
         status: 'in-flight',
         seq: item.seq,
@@ -297,10 +322,37 @@ function changeRecords(history, sessionEnded = false) {
       transport: item.transport,
       actor: item.actor,
       state: item.state,
+      rawKind: item.rawKind,
+      adapter: item.adapter,
+    }
+    const causal = [...changes].reverse().find(change => {
+      if (!change.confirmation || !item.requestId || change.requestId !== item.requestId) return false
+      if (Math.abs(item.ts - change.ts) > 1_000) return false
+      const evidence = change.confirmations?.length ? change.confirmations : [change.confirmation]
+      return item.kind.startsWith('adapter.')
+        ? evidence.some(entry => entry.kind === item.rawKind)
+        : evidence.some(entry => entry.rawKind === item.kind)
+    })
+    if (causal) {
+      causal.confirmations = [...(causal.confirmations?.length ? causal.confirmations : [causal.confirmation]), confirmation]
+      if (item.kind.startsWith('adapter.')) {
+        Object.assign(causal, {
+          confirmation,
+          verb: observedVerb(item),
+          seq: item.seq,
+          ts: item.ts,
+          channel: item.channel || causal.channel,
+          actor: item.actor || causal.actor,
+          transport: item.transport || causal.transport,
+          state: item.state,
+        })
+      }
+      continue
     }
     if (open && !open.confirmation) {
       Object.assign(open, {
         confirmation,
+        confirmations: [confirmation],
         verb: observedVerb(item),
         status: 'confirmed',
         seq: item.seq,
@@ -317,6 +369,7 @@ function changeRecords(history, sessionEnded = false) {
         requestId: item.requestId,
         claim,
         confirmation,
+        confirmations: [confirmation],
         verb: observedVerb(item),
         status: 'confirmed',
         seq: item.seq,
@@ -403,6 +456,7 @@ function buildRequestTargets(events) {
 function targetsForEvent(event, requestTargets) {
   const direct = resolveTopologyEntity(event)
   if (direct) return [direct.key]
+  if (isRevisionEvent(event)) return []
   return requestTargets.get(requestId(event)) || []
 }
 
@@ -513,7 +567,7 @@ function analyze(events, requestTargets, topologyVersion = 1) {
         const merged = mergeEntity(entity, resolved || provisionalEntity(key, event) || entity)
         entity.identity = merged.identity
         entity.title = merged.title
-        const observedTitle = classification === 'observed' ? text(event.data?.title || event.data?.displayName || event.data?.objectName) : ''
+        const observedTitle = classification === 'observed' && !isRevisionEvent(event) ? text(event.data?.title || event.data?.displayName || event.data?.objectName) : ''
         if (observedTitle) entity.title = observedTitle
         entity.type = merged.type
         entity.category = merged.category
@@ -545,6 +599,8 @@ function analyze(events, requestTargets, topologyVersion = 1) {
             ...stateData(event),
             ...(topologyVersion > 1 ? { parentId: entity.parentId, territory: entity.territory, ownerPlugin: entity.ownerPlugin } : {}),
           },
+          rawKind: event.data?.rawKind || null,
+          adapter: event.data?.adapter || null,
         })
         if (classification === 'declared') entity.declaredCount++
         if (classification === 'observed') entity.observedCount++
@@ -879,47 +935,50 @@ function layoutContainmentTopology(topology, options = {}) {
   const columns = compact ? 1 : Math.max(1, Number(options.layoutSeed?.desktopWrapColumns || 4))
   const nodeHeights = options.nodeHeights || {}
   const laneStartX = padX + nodeW + gapX
-  const rowStep = nodeH + gapY
+  const columnStep = nodeW + gapX
+  const rowStep = nodeH + Math.max(gapY, 68)
   const placed = [{ ...topology.root, x: padX, y: padY, depth: 0 }]
-  const rowOwners = new Map()
-  const territoryState = new Map()
   const slots = new Map()
-
-  const firstFreeRow = start => {
-    let row = start
-    while (rowOwners.has(row)) row++
-    return row
-  }
   const orderedNodes = [...topology.nodes].toSorted((left, right) => {
     const leftRank = TERRITORY_ORDER.indexOf(left.territory || 'general')
     const rightRank = TERRITORY_ORDER.indexOf(right.territory || 'general')
     return leftRank - rightRank || left.order - right.order
   })
-  for (const node of orderedNodes) {
-    const territory = node.territory || 'general'
-    let state = territoryState.get(territory)
-    if (!state) {
-      const row = firstFreeRow(0)
-      rowOwners.set(row, territory)
-      state = { row, column: 0 }
-      territoryState.set(territory, state)
+  const territoryNodes = new Map(TERRITORY_ORDER.map(territory => [territory, orderedNodes.filter(node => (node.territory || 'general') === territory)]))
+  const placeAt = (node, territory, row, column, x) => {
+    placed.push({ ...node, x, y: padY + row * rowStep, depth: TERRITORY_ORDER.indexOf(territory) + 1 })
+    slots.set(node.id, { territory, row, column })
+  }
+
+  if (compact) {
+    let row = 1
+    for (const territory of TERRITORY_ORDER) for (const node of territoryNodes.get(territory) || []) placeAt(node, territory, row++, 0, laneStartX)
+  } else {
+    const content = territoryNodes.get('content') || []
+    const worldColumns = columns + 1
+    content.forEach((node, index) => {
+      if (index < columns) placeAt(node, 'content', 0, index + 1, padX + (index + 1) * columnStep)
+      else {
+        const overflow = index - columns
+        placeAt(node, 'content', 1 + Math.floor(overflow / worldColumns), overflow % worldColumns, padX + (overflow % worldColumns) * columnStep)
+      }
+    })
+    let nextRow = content.length <= columns ? 1 : 2 + Math.floor((content.length - columns - 1) / worldColumns)
+    const occupied = TERRITORY_ORDER.slice(1).filter(territory => (territoryNodes.get(territory) || []).length)
+    let shelfColumn = 0
+    for (const territory of occupied) {
+      const nodes = territoryNodes.get(territory)
+      if (nodes.length <= 2) {
+        if (shelfColumn + nodes.length > columns) { nextRow++; shelfColumn = 0 }
+        nodes.forEach((node, nodeIndex) => placeAt(node, territory, nextRow, shelfColumn + nodeIndex, padX + (shelfColumn + nodeIndex) * columnStep))
+        shelfColumn += nodes.length
+        if (shelfColumn === columns) { nextRow++; shelfColumn = 0 }
+        continue
+      }
+      if (shelfColumn) { nextRow++; shelfColumn = 0 }
+      nodes.forEach((node, nodeIndex) => placeAt(node, territory, nextRow + Math.floor(nodeIndex / columns), nodeIndex % columns, padX + (nodeIndex % columns) * columnStep))
+      nextRow += Math.max(1, Math.ceil(nodes.length / columns))
     }
-    if (state.column >= columns) {
-      let row = state.row + 1
-      while (rowOwners.has(row) && rowOwners.get(row) !== territory) row++
-      rowOwners.set(row, territory)
-      state.row = row
-      state.column = 0
-    }
-    const placedNode = {
-      ...node,
-      x: laneStartX + state.column * (nodeW + gapX),
-      y: padY + state.row * rowStep,
-      depth: TERRITORY_ORDER.indexOf(territory) + 1,
-    }
-    placed.push(placedNode)
-    slots.set(node.id, { territory, row: state.row, column: state.column })
-    state.column++
   }
 
   const visible = placed.filter(node => node.id === 'wp:site' || !node.future)
@@ -931,7 +990,8 @@ function layoutContainmentTopology(topology, options = {}) {
     consecutiveGroups(rows).forEach((rowGroup, fragmentIndex) => {
       const fragmentNodes = territoryNodes.filter(node => rowGroup.includes(slots.get(node.id).row))
       const left = Math.min(...fragmentNodes.map(node => node.x)) - 24
-      const top = Math.min(...fragmentNodes.map(node => node.y)) - 24
+      const territoryTopPadding = territory === 'plugins' ? 44 : 24
+      const top = Math.min(...fragmentNodes.map(node => node.y)) - territoryTopPadding
       const right = Math.max(...fragmentNodes.map(node => node.x + nodeW)) + 24
       const bottom = Math.max(...fragmentNodes.map(node => node.y + (nodeHeights[node.id] || nodeH))) + 24
       regions.push({
@@ -1211,7 +1271,7 @@ function minimumAspectBounds(bounds, aspect, minWidth, minHeight) {
 function edgeLabelBounds(edge) {
   if (!edge?.label || !Number.isFinite(edge.labelX) || !Number.isFinite(edge.labelY)) return null
   const width = Math.max(36, text(edge.label).length * 7.4)
-  const x = edge.labelAnchor === 'start' ? edge.labelX : edge.labelX - width / 2
+  const x = edge.labelAnchor === 'start' ? edge.labelX : edge.labelAnchor === 'end' ? edge.labelX - width : edge.labelX - width / 2
   return { x, y: edge.labelY - 13, width, height: 17 }
 }
 
