@@ -59,4 +59,4 @@ files: [package.json, bin/**]
   from: roadmap
 
 ## decisions
-- 2026-08-25: see knowledge/decisions.md — trail is product-owned durable JSONL, never a view over agent session folders
+- 2026-08-25: trail is product-owned durable JSONL (docs/trail-format.md), never a view over agent session folders

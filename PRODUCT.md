@@ -100,4 +100,4 @@ The endgame user is the site owner. The road there is paved with developers.
 
 ## Provenance
 
-aphelion adapts [sodiumsun/agenttrail](https://github.com/sodiumsun/agenttrail) (MIT), vendored as a snapshot in `upstream/agenttrail/` — assessment and extension points in `knowledge/agenttrail-assessment.md`. We keep its PLAN.md convention compatible where cheap, and diverge deliberately where WordPress semantics demand it.
+aphelion adapts [sodiumsun/agenttrail](https://github.com/sodiumsun/agenttrail) (MIT), vendored as a snapshot in `upstream/agenttrail/`. We keep its PLAN.md convention compatible where cheap, and diverge deliberately where WordPress semantics demand it.

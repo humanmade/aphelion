@@ -19,3 +19,7 @@ QA_REPORT.md
 PRD.md
 *-PRD.md
 prd/
+internal/
+knowledge/
+DESIGN.md
+BUILD-PLAN.md
