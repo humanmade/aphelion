@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#090b10">
+  <title>Aphelion — WordPress agent trail</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <!--
+  THESIS: Agent work becomes trustworthy when declared intent and WordPress evidence share one continuous ledger; refuse the generic dashboard card grid.
+  OWN-WORLD: Near-black spatial planes, graphite nodes, electric signal colour, hairline rules, and an AgentTrail-derived topology canvas.
+  STORY: A site owner sees who is connected, what they intended, what WordPress changed, and can replay the exact same trail.
+  FIRST VIEWPORT: Session rail left, compact playback controls above an expandable topology, WordPress context inspector right.
+  FORM: AgentTrail's dependency graph extended into a WordPress evidence journey; assigned direction seed b3813012.
+  FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review and the visual contract
+  -->
+  <a class="skip-link" href="#evidence">Skip to evidence</a>
+  <div class="app-shell" data-app-state="loading" data-focus="false">
+    <header class="topbar">
+      <div class="brand" aria-label="Aphelion">
+        <svg class="brand-mark" viewBox="0 0 44 44" aria-hidden="true">
+          <circle cx="22" cy="22" r="15.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <ellipse cx="22" cy="22" rx="20" ry="8" fill="none" stroke="currentColor" stroke-width="1.5" transform="rotate(-24 22 22)"/>
+          <circle cx="7.8" cy="27.4" r="3.2" fill="currentColor"/>
+        </svg>
+        <span class="brand-name">aphelion</span>
+      </div>
+      <div class="target-lockup">
+        <strong id="target-name">Opening the trail…</strong>
+        <span id="target-path">Local by construction</span>
+      </div>
+      <div class="topbar-status">
+        <span class="live-signal" id="live-signal" data-status="connecting"><i></i><span>Connecting</span></span>
+        <button class="icon-button" id="copy-link" type="button" aria-label="Copy board link" title="Copy board link">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <aside class="session-rail" aria-label="Recorded sessions">
+      <div class="rail-heading">
+        <h2>Recorded paths</h2>
+        <span id="session-count">0</span>
+      </div>
+      <div class="session-list" id="session-list"></div>
+      <div class="rail-foot">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 16 5v4.6c0 3.5-2.4 6.5-6 7.9-3.6-1.4-6-4.4-6-7.9V5l6-2.5Z"/><path d="m7.2 10 1.8 1.8 3.8-4"/></svg>
+        <p><strong>Your trail stays here.</strong><span>No account. No telemetry. Nothing leaves this machine.</span></p>
+      </div>
+    </aside>
+
+    <main class="workspace" id="evidence">
+      <section class="playback-console" aria-label="Trail playback">
+        <div class="mode-switch" role="tablist" aria-label="Projection mode">
+          <button type="button" role="tab" aria-selected="true" data-mode="live">Live</button>
+          <button type="button" role="tab" aria-selected="false" data-mode="replay">Replay</button>
+          <button type="button" role="tab" aria-selected="false" data-mode="timelapse">Timelapse</button>
+        </div>
+        <button class="focus-button" id="focus-canvas" type="button" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M20 15v5h-5M4 15v5h5"/></svg>
+          <span>Focus canvas</span>
+        </button>
+        <div class="playback-meta">
+          <button class="play-button" id="playback" type="button" disabled>
+            <svg class="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7V5Z"/></svg>
+            <svg class="pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+            <span>Play trail</span>
+          </button>
+          <input id="scrubber" type="range" min="0" max="0" value="0" aria-label="Replay position" disabled>
+          <span id="playback-time">Waiting for evidence</span>
+          <span class="event-position" id="event-position">0 / 0 events</span>
+        </div>
+      </section>
+
+      <section class="component-map" aria-labelledby="map-title">
+        <div class="section-heading">
+          <h2 id="map-title">Work topology</h2>
+          <span id="map-summary">Reading PLAN.md and WordPress declarations</span>
+        </div>
+        <div class="component-flow" id="component-flow" aria-label="Dependency and observed journey graph"></div>
+      </section>
+
+      <section class="current-brief" aria-labelledby="brief-title">
+        <div class="brief-copy">
+          <h1 id="brief-title">Waiting for the first recorded action</h1>
+          <p id="brief-detail">Aphelion is ready. Agent intent and observed WordPress changes will appear here as separate evidence.</p>
+        </div>
+        <dl class="brief-facts">
+          <div><dt>Declared</dt><dd id="declared-count">0</dd></div>
+          <div><dt>Observed</dt><dd id="observed-count">0</dd></div>
+          <div><dt>Connections</dt><dd id="connection-count">0</dd></div>
+        </dl>
+      </section>
+
+      <section class="evidence-ledger" aria-labelledby="ledger-title">
+        <div class="section-heading ledger-heading">
+          <div>
+            <h2 id="ledger-title">Evidence ledger</h2>
+            <span>Claims stay beside effects. They are never silently merged.</span>
+          </div>
+          <div class="ledger-legend" aria-label="Evidence legend">
+            <span><i class="declared-dot"></i>Declared</span>
+            <span><i class="observed-dot"></i>Observed</span>
+            <span><i class="presence-dot"></i>Connection</span>
+          </div>
+        </div>
+        <div class="ledger-columns" aria-hidden="true"><span>When</span><span>Evidence</span><span>Channel</span></div>
+        <div class="ledger-rows" id="ledger-rows" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <aside class="inspector" aria-label="WordPress context and event detail">
+      <section class="presence-panel" aria-labelledby="presence-title">
+        <div class="section-heading compact">
+          <h2 id="presence-title">Connected now</h2>
+          <span id="presence-summary">No live channels</span>
+        </div>
+        <div id="presence-list" class="presence-list"></div>
+      </section>
+      <section class="wordpress-panel" aria-labelledby="wordpress-title">
+        <div class="section-heading compact">
+          <h2 id="wordpress-title">WordPress context</h2>
+          <span id="wordpress-count">0 observed effects</span>
+        </div>
+        <div id="wordpress-list" class="wordpress-list"></div>
+      </section>
+      <section class="detail-panel" aria-labelledby="detail-title">
+        <div class="section-heading compact">
+          <h2 id="detail-title">Evidence detail</h2>
+          <span id="detail-sequence">Select a ledger row</span>
+        </div>
+        <div id="event-detail" class="event-detail empty">Technical provenance stays one level down, ready when you need it.</div>
+      </section>
+    </aside>
+
+    <div class="connection-banner" id="connection-banner" role="status" hidden>
+      <strong>The live connection paused.</strong>
+      <span>The recorded trail is safe. Aphelion is trying to reconnect.</span>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+  <script type="module" src="/assets/app.js"></script>
+</body>
+</html>

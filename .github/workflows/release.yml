@@ -1,0 +1,53 @@
+name: Publish to npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: npm distribution tag
+        type: choice
+        options:
+          - latest
+          - next
+          - beta
+        default: latest
+      confirmation:
+        description: Type publish-aphelion to continue
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: inputs.confirmation == 'publish-aphelion'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: npm
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - name: Use an OIDC-capable npm CLI
+        run: npm install --global npm@11.16.0 --ignore-scripts
+      - name: Require a clean release version
+        run: |
+          node -e "const p=require('./package.json'); if (/[-+]/.test(p.version)) { throw new Error('Publish requires a stable semver version') }"
+          if npm view "aphelion@$(node -p \"require('./package.json').version\")" version >/dev/null 2>&1; then
+            echo 'Version already exists on npm'
+            exit 1
+          fi
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: npm run verify
+      - name: Publish through npm trusted publishing
+        run: npm publish --ignore-scripts --tag "${{ inputs.channel }}"

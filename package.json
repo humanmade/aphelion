@@ -1,0 +1,80 @@
+{
+  "name": "aphelion",
+  "version": "0.1.0",
+  "description": "Local flight recorder, live map, replay, and timelapse for AI agents working on WordPress.",
+  "type": "module",
+  "bin": {
+    "aphelion": "bin/aphelion.mjs"
+  },
+  "main": "./src/index.mjs",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./src/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "assets",
+    "bin",
+    "public",
+    "src",
+    "types",
+    "docs",
+    "CHANGELOG.md",
+    "README.md",
+    "RELEASING.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "node scripts/build-board.mjs",
+    "check": "node scripts/check-source.mjs",
+    "check:docs": "node scripts/check-docs.mjs",
+    "test": "node --test test/**/*.test.mjs",
+    "test:browser": "playwright test",
+    "check:package": "node scripts/check-package.mjs && publint && attw --profile esm-only --pack .",
+    "pack:check": "node scripts/check-pack.mjs",
+    "check:consumer": "node scripts/check-consumer.mjs",
+    "release:dry-run": "npm run verify && npm publish --dry-run --ignore-scripts",
+    "verify": "npm run build && npm run check && npm run check:docs && npm test && npm run test:browser && npm run check:package && npm run pack:check && npm run check:consumer",
+    "prepack": "npm run build && npm run check && npm test"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/humanmade/aphelion.git"
+  },
+  "homepage": "https://github.com/humanmade/aphelion#readme",
+  "bugs": {
+    "url": "https://github.com/humanmade/aphelion/issues"
+  },
+  "author": "Human Made",
+  "license": "MIT",
+  "keywords": [
+    "wordpress",
+    "ai-agents",
+    "agent-observability",
+    "local-first",
+    "audit-trail",
+    "replay",
+    "timelapse",
+    "wp-cli",
+    "mcp",
+    "abilities-api",
+    "cli"
+  ],
+  "devDependencies": {
+    "@arethetypeswrong/cli": "0.18.5",
+    "@playwright/test": "1.62.1",
+    "publint": "0.3.24"
+  }
+}

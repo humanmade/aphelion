@@ -11,6 +11,9 @@ Read `PRODUCT.md`. It defines the product, the phases, and eight design principl
 | Path | What it is |
 |---|---|
 | `PRODUCT.md` | PRD / North Star — the why and what |
+| `BUILD-PLAN.md` | Execution PRD — delivery sequence, acceptance gates, and test strategy |
+| `HYPERFRAMES.md` | On-demand handoff for projecting truthful Aphelion trails into HyperFrames videos |
+| `DESIGN.md` | Design tokens + locked art direction + topology/motion contracts — binding for all UI work |
 | `PLAN.md` | The living component map (agenttrail convention) — maintain it as you work |
 | `docs/` | Build-level specs: `trail-format.md` (the core primitive), `observation-surfaces.md` (how we see WordPress) |
 | `upstream/agenttrail/` | Vendored MIT snapshot of sodiumsun/agenttrail (commit `41454d4`) — the code we adapt |
