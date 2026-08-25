@@ -2,7 +2,7 @@
 
 **The local flight recorder for AI agents working on WordPress.**
 
-![Aphelion replays agent work over a stable map of the WordPress objects it touched](https://cdn.jsdelivr.net/npm/aphelion@latest/assets/aphelion-board.png)
+![Aphelion replays agent work over a stable map of the WordPress objects it touched](assets/aphelion-board.png)
 
 An agent says it updated a page. The filesystem shows a diff. WordPress reports a save.
 Those are three fragments of one story, usually scattered across terminals, session logs,
