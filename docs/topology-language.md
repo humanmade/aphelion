@@ -6,6 +6,8 @@ Binding for every topology surface (live, replay, timelapse). This document defi
 
 Everything on the canvas is exactly one of these. Nothing is ever two of them.
 
+Regions are cartography: labeled background territory, never a noun, card, or interactive target. The three-nouns rule governs spatial identity; regions and guides carry none.
+
 **A place** is somewhere on the site where state lives and where changes land: the site itself, a page or post, a setting, a plugin's domain, a menu, a term, a user, an ability. Places are the *nodes* — the only things with a position on the map.
 
 - Litmus test: *could you go there tomorrow, when nothing is happening, and it would still exist?* Page 464 passes. The site tagline passes. "A QA journey," "a WP-CLI run," "a session," "agent work" all fail — they are time, not territory.
@@ -53,6 +55,10 @@ Hard rules:
 
 ## 4. The change contract
 
+### Containment guides
+
+Containment guides are thin, quiet, static elbows for genuine parent/child relations recorded by the observer. They are structure, not flows: they never carry activity, never animate because trail time advanced, and never duplicate territory enclosure. An observed reparent event cross-fades the old guide into the new one while the child card keeps its canonical position.
+
 Where change text lives, by surface:
 
 - **On the card**: the change tail (§2, rows 4–5).
@@ -69,6 +75,8 @@ At any playhead moment the viewer should be able to say what is happening in one
 
 One moment, one focus: at most one flow is in the "in flight or landing" state per playhead instant (the trail is ordered; simultaneity is resolved by seq). Everything else on the canvas is memory — dimmer, still, and stable. A first-touch claim casts a provisional outline of the place at step 1 — visible, dim, marked awaiting. Confirmation at step 2 solidifies it in place. An outline whose session ends without confirmation persists, grey and marked unconfirmed; it is never silently removed. Existing places never move because time advanced.
 
+The trail never moves a card; the viewer may.
+
 ## 6. The three-questions test
 
 Every visual layer answers exactly one question, and each question is answered by exactly one layer:
@@ -80,6 +88,8 @@ Every visual layer answers exactly one question, and each question is answered b
 | **What has changed?** | State lines, history, the ledger | Extra nodes, extra edges |
 
 If a proposed element answers two questions at once, split it. If it answers none, delete it.
+
+The trail never moves a card; the viewer may. Canonical coordinates belong to the projection; pan, zoom, filter, collapse, and expand belong to viewer state.
 
 ## 7. Applied: correcting the 10:56 board (historical)
 

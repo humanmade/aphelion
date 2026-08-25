@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { adaptAccelerateEvent, renderFrameSvg, renderTimelapse, startDaemon } from '../src/index.mjs'
+import { adaptAccelerateEvent, renderFrameGeometry, renderFrameSvg, renderTimelapse, startDaemon } from '../src/index.mjs'
 
 function temporary(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-wordpress-'))
@@ -67,13 +67,15 @@ test('timelapse HTML and SVG are deterministic trail projections', async t => {
   assert.equal(result.frames, 4)
   const html = fs.readFileSync(output, 'utf8')
   assert.match(html, /Play timelapse/)
-  assert.match(html, /Evidence ledger/)
-  const svg = renderFrameSvg({
-    session: { target: '<unsafe>' }, plan: { nodes: [] }, recent: [], counts: { declared: 0, observed: 0 },
-  }, events[0], { progress: .5 })
+  assert.match(html, /wp:post:4/)
+  assert.doesNotMatch(html, /Evidence ledger/)
+  const unsafeEvents = events.map((event, index) => index ? event : { ...event, data: { ...event.data, target: '<unsafe>' } })
+  const svg = renderFrameSvg(unsafeEvents, unsafeEvents.length - 1)
   assert.doesNotMatch(svg, /<unsafe>/)
   assert.match(svg, /&lt;unsafe&gt;/)
   assert.doesNotMatch(svg, /(?:^|[;{])font:/, 'native SVG renderers must not receive CSS font shorthand')
   assert.doesNotMatch(svg, /letter-spacing:-/, 'ImageMagick MSVG must not receive negative text kerning')
-  assert.match(svg, /font-size:38px/, 'headline size must remain explicit for ImageMagick MSVG')
+  const geometry = renderFrameGeometry(events, events.length - 1)
+  assert.deepEqual(geometry.nodes.map(node => [node.id, node.x, node.y]), [['wp:site', 42, 44], ['wp:post:4', 474, 44], ['wp:ability:core/update-post', 474, 312]])
+  assert.equal(geometry.edges.every(edge => edge.path), true)
 })

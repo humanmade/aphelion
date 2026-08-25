@@ -1,6 +1,6 @@
 import { createProjection, reduceEvent, summarizeEvent } from '/assets/reducer.mjs'
 import { buildReplayIndex, projectReplay } from '/assets/replay.mjs'
-import { buildSiteTopology, displayChannel, layoutSiteTopology } from '/assets/topology.mjs'
+import { buildSiteTopology, displayChannel, FULL_FIT_PLACE_LIMIT, groupTopologyChanges, layoutSiteTopology, routeContainmentElbows, routeSiteTopologyEdges, siteCardHeight, topologyCameraFrames, topologyRunLabel, visibleTopologyEdges } from '/assets/topology.mjs'
 
 // Graph layout and node interaction substantially adapt sodiumsun/agenttrail (MIT, snapshot 41454d4).
 
@@ -25,6 +25,9 @@ const state = {
   cameraBounds: null,
   cameraContext: null,
   userMovedCamera: false,
+  territoryFilter: 'all',
+  territoryFilterContext: null,
+  fitFilteredOnRender: false,
   graph: null,
   renderFrame: null,
   pendingRenderModel: null,
@@ -215,32 +218,18 @@ function placeIcon(type) {
   return icon
 }
 
-function changeKey(change) {
-  return change.confirmation?.kind || (change.status === 'in-flight' ? 'in-flight' : change.verb || 'change')
-}
-
-function canCollapse(left, right) {
-  if (changeKey(left) !== changeKey(right)) return false
-  if (left.claim || right.claim) return left.requestId && left.requestId === right.requestId
-  return left.requestId === right.requestId || (!left.requestId && !right.requestId)
-}
-
 function collapseChanges(changes = []) {
-  const groups = []
-  for (const change of changes) {
-    const previous = groups.at(-1)
-    if (previous && canCollapse(previous.at(-1), change)) previous.push(change)
-    else groups.push([change])
-  }
-  return groups.map(group => changeRow(group)).reverse()
+  return groupTopologyChanges(changes).map(group => changeRow(group)).reverse()
 }
 
 function timeRange(group) {
   const first = formatClock(group[0].ts)
   const last = formatClock(group.at(-1).ts)
   if (group.length === 1 || first === last) return last
-  if (first.slice(0, 5) === last.slice(0, 5)) return `${first}–${last.slice(-2)}`
-  return `${first.slice(0, 5)}–${last.slice(0, 5)}`
+  const firstParts = first.match(/^(.*?):(\d{2})(\s(?:AM|PM))?$/i)
+  const lastParts = last.match(/^(.*?):(\d{2})(\s(?:AM|PM))?$/i)
+  if (firstParts && lastParts && firstParts[1] === lastParts[1] && firstParts[3] === lastParts[3]) return `${firstParts[1]}:${firstParts[2]}–${lastParts[2]}${lastParts[3] || ''}`
+  return `${first}–${last}`
 }
 
 const actionForms = {
@@ -290,26 +279,21 @@ function changeRow(group) {
   const awaiting = latest.status === 'in-flight'
   const unconfirmed = latest.status === 'unconfirmed'
   if (group.length > 1) {
-    const kind = changeKey(latest)
-    const noun = kind.includes('post_meta') ? 'metadata changes' : kind.includes('post.updated') ? 'block edits' : `${titleCase(kind.split('.').at(-1))} changes`.toLowerCase()
-    const lead = `${group.length} ${noun}`
+    const lead = `${group.length} ${topologyRunLabel(group)}`
     return { lead, rest: '', time: timeRange(group), status: failed ? 'failed' : awaiting ? 'awaiting' : unconfirmed ? 'unconfirmed' : 'confirmed', changes: group }
   }
   const phrase = cardPhrase(latest, awaiting)
   return { ...phraseParts(phrase), time: awaiting ? '' : formatClock(latest.ts), status: failed ? 'failed' : awaiting ? 'awaiting' : unconfirmed ? 'unconfirmed' : 'confirmed', changes: group }
 }
 
-function cardBookkeeping(change) {
-  const metaKey = change.state?.metaKey || change.confirmation?.state?.metaKey
-  return /^_?wp_trash_meta(?:_|$)/i.test(String(metaKey || ''))
-}
-
 function cardRows(item) {
-  if (item.changes?.length) return collapseChanges(item.changes.filter(change => !cardBookkeeping(change)))
+  if (item.sizeTier === 'tombstone') return []
+  if (item.changes?.length) return collapseChanges(item.changes)
   return item.rows || []
 }
 
 function cardStateLine(item) {
+  if (item.sizeTier === 'tombstone') return ''
   const stateLine = String(item.stateLine || item.meta || '').trim()
   if (!stateLine || stateLine === 'No state recorded' || item.future) return ''
   const genericName = /^(?:Content|Page|Post) #\d+$/.test(String(item.title || ''))
@@ -318,6 +302,8 @@ function cardStateLine(item) {
 }
 
 function cardHeight(item) {
+  if (item.sizeTier === 'tombstone') return 58
+  if (item.changes?.length || item.group === 'site') return siteCardHeight(item, { expanded: state.expandedTails.has(item.id) })
   const rows = cardRows(item)
   const base = 30 + (cardStateLine(item) ? 74 : 52)
   if (!rows.length) return base
@@ -403,7 +389,7 @@ function patchPlaceCard(card, item, height, model) {
   if (refs.name.textContent !== item.title) refs.name.textContent = item.title
 
   const stateLine = cardStateLine(item)
-  refs.identity.className = `place-identity${stateLine ? '' : ' without-state'}`
+  refs.identity.className = `place-identity${stateLine ? '' : ' without-state'}${item.sizeTier === 'tombstone' ? ' tombstone' : ''}`
   refs.stateLine.hidden = !stateLine
   if (stateLine && refs.stateLine.textContent !== stateLine) refs.stateLine.textContent = stateLine
 
@@ -492,9 +478,10 @@ function ensureGraphShell(flow) {
   const grid = svgNode('rect', { width: '100%', height: '100%', class: 'graph-grid-fill' })
   const world = svgNode('g', { class: 'graph-world' })
   const laneLayer = svgNode('g', { class: 'graph-lanes', 'aria-hidden': true })
+  const containmentLayer = svgNode('g', { class: 'graph-containments', 'aria-hidden': true })
   const edgeLayer = svgNode('g', { class: 'graph-edges' })
   const nodeLayer = svgNode('g', { class: 'graph-nodes' })
-  world.append(laneLayer, edgeLayer, nodeLayer)
+  world.append(laneLayer, containmentLayer, edgeLayer, nodeLayer)
   svg.append(defs, grid, world)
 
   const controlIcon = paths => {
@@ -508,15 +495,18 @@ function ensureGraphShell(flow) {
   const zoomIn = node('button', 'graph-control'); zoomIn.type = 'button'; zoomIn.setAttribute('aria-label', 'Zoom graph in'); zoomIn.append(controlIcon(['M12 6v12', 'M6 12h12']))
   const fit = node('button', 'graph-control fit'); fit.type = 'button'; fit.setAttribute('aria-label', 'Fit graph to view'); fit.append(controlIcon(['M9 4H4v5', 'M15 4h5v5', 'M20 15v5h-5', 'M4 15v5h5']))
   controls.append(zoomOut, zoomValue, zoomIn, fit)
+  const filters = node('div', 'territory-filters')
+  filters.setAttribute('role', 'toolbar')
+  filters.setAttribute('aria-label', 'Filter map by territory')
   const empty = node('div', 'empty-board')
   empty.append(node('p', '', 'The map grows when the first durable place is touched.'), node('p', '', 'No account, no telemetry, nothing leaves this machine.'))
-  shell.append(svg, controls, empty)
+  shell.append(svg, controls, filters, empty)
   while (flow.firstChild) flow.firstChild.remove()
   flow.append(shell)
 
   const graph = state.graph = {
-    shell, svg, world, laneLayer, edgeLayer, nodeLayer, controls, empty, zoomValue,
-    nodeElements: new Map(), edgeElements: new Map(), laneElements: new Map(),
+    shell, svg, world, laneLayer, containmentLayer, edgeLayer, nodeLayer, controls, filters, empty, zoomValue,
+    nodeElements: new Map(), edgeElements: new Map(), laneElements: new Map(), containmentElements: new Map(),
     model: null, topology: null, pan: null,
   }
 
@@ -588,6 +578,13 @@ function createLaneElement(lane) {
   const label = svgNode('text', { class: 'graph-lane-label' })
   group.append(frame, label)
   return { id: lane.id, group, frame, label }
+}
+
+function createContainmentElement(relation) {
+  const path = svgNode('path', { class: 'containment-guide entering', 'data-containment-id': relation.id, 'data-parent-id': relation.parentId, 'data-child-id': relation.childId })
+  path.addEventListener('transitionend', () => path.classList.remove('entering'), { once: true })
+  requestAnimationFrame(() => path.classList.remove('entering'))
+  return { id: relation.id, childId: relation.childId, path }
 }
 
 function createNodeElement(item, nodeW, height, model) {
@@ -680,6 +677,10 @@ function renderComponents(model, topology = currentTopology(model)) {
       changes: entity.changes,
       future: entity.future,
       visibility: entity.visibility,
+      territory: entity.territory,
+      parentId: entity.parentId,
+      ownerPlugin: entity.ownerPlugin,
+      sizeTier: entity.sizeTier,
       flowState: entity.flowState,
       current: entity.current,
       seq: entity.lastSeq,
@@ -722,9 +723,11 @@ function renderComponents(model, topology = currentTopology(model)) {
     for (const entry of graph.nodeElements.values()) entry.group.remove()
     for (const entry of graph.edgeElements.values()) entry.group.remove()
     for (const entry of graph.laneElements.values()) entry.group.remove()
+    for (const entry of graph.containmentElements.values()) entry.path.remove()
     graph.nodeElements.clear()
     graph.edgeElements.clear()
     graph.laneElements.clear()
+    graph.containmentElements.clear()
     return
   }
   graph.empty.hidden = true
@@ -765,50 +768,42 @@ function renderComponents(model, topology = currentTopology(model)) {
   }
 
   const occupiedNodes = graphNodes.filter(item => !item.future)
-  const graphRight = Math.max(compact ? flowWidth : 720, ...occupiedNodes.map(item => item.x + nodeW + padX))
-  const graphBottom = Math.max(compact ? flowHeight : 420, ...occupiedNodes.map(item => item.y + metrics[item.id].h + padY))
+  const territoryFilterContext = model.session?.sessionId || model.daemon?.sessionId || state.sessionId || 'current'
+  if (state.territoryFilterContext !== territoryFilterContext) {
+    state.territoryFilter = 'all'
+    state.territoryFilterContext = territoryFilterContext
+  }
+  const visibleTerritories = [...new Set(topology.nodes.filter(node => !node.future).map(node => node.territory).filter(Boolean))]
+  if (state.territoryFilter !== 'all' && !visibleTerritories.includes(state.territoryFilter)) state.territoryFilter = 'all'
+  const showTerritoryFilters = siteSession && topology.topologyVersion > 1 && topology.nodes.filter(node => !node.future).length > FULL_FIT_PLACE_LIMIT && visibleTerritories.length > 1
+  graph.filters.hidden = !showTerritoryFilters
+  if (showTerritoryFilters) {
+    const labels = new Map((topology.territories || []).map(territory => [territory.id, territory.label]))
+    const choices = ['all', ...visibleTerritories]
+    for (const button of [...graph.filters.children]) if (!choices.includes(button.dataset.territory)) button.remove()
+    for (const territory of choices) {
+      let button = graph.filters.querySelector(`[data-territory="${territory}"]`)
+      if (!button) {
+        button = node('button', 'territory-filter')
+        button.type = 'button'
+        button.dataset.territory = territory
+        button.addEventListener('click', () => {
+          state.territoryFilter = button.dataset.territory
+          state.fitFilteredOnRender = true
+          render()
+        })
+        graph.filters.append(button)
+      }
+      button.textContent = territory === 'all' ? 'All' : labels.get(territory) || titleCase(territory)
+      button.setAttribute('aria-pressed', String(state.territoryFilter === territory))
+    }
+  }
+  const territoryAllows = item => !siteSession || state.territoryFilter === 'all' || item.topologyRoot || item.territory === state.territoryFilter
+  const displayedNodes = occupiedNodes.filter(territoryAllows)
   const byGraphId = Object.fromEntries(graphNodes.map(item => [item.id, item]))
-  const channelTrunks = new Map()
-  const channelRowBranches = new Map()
-  if (!compact) {
-    const channelEdges = graphEdges.filter(edge => edge.kind === 'channel' && byGraphId[edge.from]?.topologyRoot && byGraphId[edge.to]?.group === 'site')
-    const root = byGraphId['wp:site']
-    const firstLaneX = Math.min(...channelEdges.map(edge => byGraphId[edge.to].x))
-    const channels = [...new Set(channelEdges.map(edge => edge.channel))]
-    for (const [index, channel] of channels.entries()) {
-      channelTrunks.set(channel, Math.max(root.x + nodeW + 4, firstLaneX - 24 - index * 14))
-    }
-    for (const edge of channelEdges) {
-      const target = byGraphId[edge.to]
-      const key = `${edge.channel}:${target.y}`
-      channelRowBranches.set(key, Math.max(channelRowBranches.get(key) || 0, target.y + metrics[target.id].h + 12))
-    }
-  }
-  const edgeGroups = new Map()
-  for (const edge of graphEdges) (edgeGroups.get(edge.to) || edgeGroups.set(edge.to, []).get(edge.to)).push(edge)
-  for (const list of edgeGroups.values()) list.forEach((edge, index) => { edge.laneOffset = (index - (list.length - 1) / 2) * 12 })
-  const edgePath = (from, to, edge) => {
-    const lane = edge.laneOffset || 0
-    const trunkX = channelTrunks.get(edge.channel)
-    if (trunkX !== undefined && edge.kind === 'channel' && from.topologyRoot && to.group === 'site') {
-      const x1 = from.x + nodeW
-      const y1 = from.y + 15
-      const branchY = channelRowBranches.get(`${edge.channel}:${to.y}`)
-      const approachX = to.x - 12
-      const inputY = to.y + 15
-      return `M${x1} ${y1}H${trunkX}V${branchY}H${approachX}V${inputY}H${to.x}`
-    }
-    const vertical = Math.abs(from.x - to.x) < 30 || compact
-    if (vertical) {
-      const x1 = from.x + nodeW / 2 + lane, y1 = from.y + metrics[from.id].h, x2 = to.x + nodeW / 2 + lane, y2 = to.y
-      const bend = Math.max(38, Math.abs(y2 - y1) / 2)
-      return `M${x1} ${y1}C${x1} ${y1 + bend} ${x2} ${y2 - bend} ${x2} ${y2}`
-    }
-    const forward = to.x >= from.x
-    const x1 = from.x + (forward ? nodeW : 0), y1 = from.y + 15 + lane, x2 = to.x + (forward ? 0 : nodeW), y2 = to.y + 15 + lane
-    const bend = Math.max(44, Math.abs(x2 - x1) / 2)
-    return `M${x1} ${y1}C${x1 + (forward ? bend : -bend)} ${y1} ${x2 + (forward ? -bend : bend)} ${y2} ${x2} ${y2}`
-  }
+  const filteredGraphEdges = graphEdges.filter(edge => territoryAllows(byGraphId[edge.to] || {}))
+  const renderedGraphEdges = siteSession ? visibleTopologyEdges(filteredGraphEdges, topology.nodes.filter(node => !node.future && territoryAllows(node)).length) : filteredGraphEdges
+  const routedEdges = new Map(routeSiteTopologyEdges(graphNodes, renderedGraphEdges, { compact, nodeW, metrics, edgeLabelStep }).map(edge => [edge.id, edge]))
 
   const labelStacks = new Map()
 
@@ -821,19 +816,43 @@ function renderComponents(model, topology = currentTopology(model)) {
       graph.laneElements.set(lane.id, entry)
       graph.laneLayer.append(entry.group)
     }
-    setSvgAttributes(entry.group, { class: `graph-lane${lane.compact ? ' compact' : ''}${lane.empty ? ' empty' : ''}` })
+    setSvgAttributes(entry.group, { class: `graph-lane${lane.kind === 'territory' ? ' territory-region' : ''}${lane.kind === 'plugin' ? ' plugin-subregion' : ''}${lane.compact ? ' compact' : ''}${lane.empty ? ' empty' : ''}`, 'data-territory': lane.territory, 'data-plugin-region': lane.plugin?.id })
+    entry.group.hidden = state.territoryFilter !== 'all' && lane.territory !== state.territoryFilter
     setSvgAttributes(entry.frame, { x: lane.x, y: lane.y, width: lane.width, height: lane.height })
     setSvgAttributes(entry.label, { x: lane.labelX ?? lane.x + 12, y: lane.labelY ?? lane.y + (lane.empty ? 15 : 16) })
-    entry.label.textContent = lane.category
+    entry.label.textContent = lane.label || lane.category
   }
   for (const [id, entry] of graph.laneElements) if (!wantedLanes.has(id)) { entry.group.remove(); graph.laneElements.delete(id) }
 
+  const routedContainments = routeContainmentElbows(graphNodes, (topology.containments || []).filter(relation => territoryAllows(byGraphId[relation.childId] || {}) && territoryAllows(byGraphId[relation.parentId] || {})), { nodeW, metrics })
+  const wantedContainments = new Set()
+  for (const relation of routedContainments) {
+    if (!relation.path) continue
+    wantedContainments.add(relation.id)
+    let entry = graph.containmentElements.get(relation.id)
+    if (!entry) {
+      entry = createContainmentElement(relation)
+      graph.containmentElements.set(relation.id, entry)
+      graph.containmentLayer.append(entry.path)
+    }
+    setSvgAttributes(entry.path, { d: relation.path, 'data-parent-id': relation.parentId, 'data-child-id': relation.childId })
+  }
+  for (const [id, entry] of graph.containmentElements) if (!wantedContainments.has(id)) {
+    graph.containmentElements.delete(id)
+    entry.path.classList.add('leaving')
+    const remove = () => entry.path.remove()
+    entry.path.addEventListener('transitionend', remove, { once: true })
+    setTimeout(remove, 420)
+  }
+
   const wantedEdges = new Set()
-  for (const edge of graphEdges) {
+  for (const edge of renderedGraphEdges) {
     const from = byGraphId[edge.from], to = byGraphId[edge.to]
     if (!from || !to) continue
     wantedEdges.add(edge.id)
-    const pathData = edgePath(from, to, edge)
+    const routed = routedEdges.get(edge.id)
+    const pathData = routed?.path
+    if (!pathData) continue
     const pathClass = `graph-edge ${edge.kind}${edge.flowState ? ` ${edge.flowState}` : ''}${edge.active ? ' active' : ''}${edge.future ? ' future' : ''}`
     let entry = graph.edgeElements.get(edge.id)
     if (!entry) {
@@ -846,14 +865,12 @@ function renderComponents(model, topology = currentTopology(model)) {
     setSvgAttributes(entry.hit, { d: pathData, tabindex: edge.future ? null : 0, role: edge.future ? null : 'button', 'aria-label': edge.future ? null : `Inspect ${edge.label || edge.kind} flow`, 'data-edge-id': edge.id })
     entry.hit.hidden = edge.future
     if (edge.label && !edge.future) {
-      const vertical = Math.abs(from.x - to.x) < 30 || compact
-      const resting = edge.kind === 'channel' && !edge.active
-      const labelX = resting ? (channelTrunks.get(edge.channel) ?? from.x + nodeW) + 8 : vertical ? to.x + nodeW / 2 + edge.laneOffset : (from.x + nodeW + to.x) / 2
-      const labelYBase = resting ? from.y + 19 + (edge.channelLabelIndex || 0) * edgeLabelStep : vertical ? to.y - 12 : to.y - 10
+      const labelX = routed.labelX
+      const labelYBase = routed.labelY
       const labelKey = `${Math.round(labelX / 48)}:${Math.round(labelYBase / 24)}`
       const stacked = labelStacks.get(labelKey) || 0
       labelStacks.set(labelKey, stacked + 1)
-      setSvgAttributes(entry.label, { class: `graph-edge-label${edge.active ? ' active' : ''}`, x: labelX, y: labelYBase - stacked * edgeLabelStep, 'text-anchor': resting ? 'start' : 'middle' })
+      setSvgAttributes(entry.label, { class: `graph-edge-label${edge.active ? ' active' : ''}`, x: labelX, y: labelYBase - stacked * edgeLabelStep, 'text-anchor': routed.labelAnchor })
       entry.label.textContent = edge.label.slice(0, 30)
       entry.label.toggleAttribute('hidden', false)
     } else entry.label.toggleAttribute('hidden', true)
@@ -879,7 +896,7 @@ function renderComponents(model, topology = currentTopology(model)) {
     wantedNodes.add(item.id)
     const selected = state.inspectorSelection?.kind === 'place' && state.inspectorSelection.id === item.id
     const flowClass = item.flowState || 'idle'
-    const classes = `graph-node ${flowClass} ${item.kind}${selected ? ' selected' : ''}${item.future ? ' future' : ''}${item.visibility === 'declared' ? ' provisional' : ''}${item.visibility === 'unconfirmed' ? ' unconfirmed' : ''}${item.current ? ' current' : ''}`
+    const classes = `graph-node ${flowClass} ${item.kind}${selected ? ' selected' : ''}${item.future ? ' future' : ''}${item.visibility === 'declared' ? ' provisional' : ''}${item.visibility === 'unconfirmed' ? ' unconfirmed' : ''}${item.current ? ' current' : ''}${item.sizeTier === 'tombstone' ? ' tombstone' : ''}${territoryAllows(item) ? '' : ' filtered'}`
     const height = metrics[item.id].h
     let entry = graph.nodeElements.get(item.id)
     const created = !entry
@@ -898,7 +915,7 @@ function renderComponents(model, topology = currentTopology(model)) {
     }
     const becameVisible = entry.future && !item.future
     entry.future = item.future
-    setSvgAttributes(group, { class: classes, 'data-node-kind': item.kind, 'data-node-group': item.group, 'data-flow-state': flowClass, transform: `translate(${item.x} ${item.y})`, tabindex: item.future ? null : 0, role: item.future ? null : 'button', 'aria-hidden': item.future ? true : null, 'aria-label': item.future ? null : `Inspect ${item.title}` })
+    setSvgAttributes(group, { class: classes, 'data-node-kind': item.kind, 'data-node-group': item.group, 'data-territory': item.territory, 'data-parent-id': item.parentId, 'data-owner-plugin': item.ownerPlugin?.id, 'data-size-tier': item.sizeTier, 'data-flow-state': flowClass, transform: `translate(${item.x} ${item.y})`, tabindex: item.future ? null : 0, role: item.future ? null : 'button', 'aria-hidden': item.future ? true : null, 'aria-label': item.future ? null : `Inspect ${item.title}` })
     setSvgAttributes(entry.foreign, { width: nodeW, height })
     patchPlaceCard(entry.card, item, height, model)
     entry.inPort.hidden = Boolean(item.topologyRoot)
@@ -908,9 +925,23 @@ function renderComponents(model, topology = currentTopology(model)) {
   }
   for (const [id, entry] of graph.nodeElements) if (!wantedNodes.has(id)) { entry.group.remove(); graph.nodeElements.delete(id) }
   state.nodePositions = new Map(graphNodes.map(item => [item.id, { x: item.x, y: item.y }]))
-  const bounds = { x: 0, y: 0, width: graphRight, height: graphBottom }
-  state.cameraBounds = bounds
-  if (!state.camera || !state.userMovedCamera) state.camera = { ...bounds }
+  const cameraFrames = topologyCameraFrames({
+    nodes: displayedNodes,
+    edges: [...routedEdges.values()],
+    lanes: layoutLanes.filter(lane => state.territoryFilter === 'all' || lane.territory === state.territoryFilter),
+    metrics,
+    nodeW,
+  }, { aspect: window.innerWidth / Math.max(1, window.innerHeight - 48), minWidth: compact ? 390 : 720, minHeight: compact ? 720 : 420 })
+  state.cameraBounds = cameraFrames.full
+  if (state.fitFilteredOnRender) {
+    state.camera = { ...cameraFrames.full }
+    state.userMovedCamera = true
+    state.fitFilteredOnRender = false
+  }
+  if (!state.userMovedCamera) {
+    if (cameraFrames.mode === 'full') state.camera = { ...cameraFrames.full }
+    else if (!state.camera || cameraFrames.focusEdge?.active) state.camera = { ...(cameraFrames.sentence || cameraFrames.full) }
+  }
   updateCamera()
 }
 
@@ -1000,6 +1031,10 @@ function renderPlaceInspector(model, topology) {
   facts.append(factList([
     ['Stable identity', place.id],
     ['Present state', place.stateLine],
+    ['Territory', place.territoryLabel],
+    ['Parent place', place.parentId],
+    ['Owner', place.ownerPlugin?.label],
+    ['Ownership evidence', place.ownerPlugin ? `${place.ownerPlugin.source} · ${place.ownerPlugin.confidence}` : null],
     ['Changes', place.changes?.length || 0],
     ['Channels', place.channels?.map(displayChannel).join(' · ')],
     ['Transports', place.transports?.join(' · ')],

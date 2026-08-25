@@ -1,3 +1,5 @@
+import { normalizeTopologyVersion } from './topology-version.mjs'
+
 const RECENT_LIMIT = 160
 
 export function createProjection() {
@@ -6,6 +8,7 @@ export function createProjection() {
     cursor: 0,
     now: 0,
     session: null,
+    topologyVersion: 1,
     status: 'idle',
     plan: { title: '', nodes: [], decisions: [] },
     repository: { target: '', files: [], declarations: [], truncated: false },
@@ -111,7 +114,8 @@ export function reduceEvent(input, event) {
   updateJourney(state, event, classification)
 
   if (event.kind === 'session.start') {
-    state.session = { ...event.data, startedAt: event.ts }
+    state.topologyVersion = normalizeTopologyVersion(event.data?.topologyVersion)
+    state.session = { ...event.data, topologyVersion: state.topologyVersion, startedAt: event.ts }
     state.status = 'live'
   } else if (event.kind === 'session.end') {
     state.status = 'ended'

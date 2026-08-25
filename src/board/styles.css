@@ -134,10 +134,16 @@ svg { display: block; }
 .graph-grid-dot { fill: oklch(28% 0 0 / .42); }
 .graph-grid-fill { fill: url(#graph-grid); }
 .graph-world { transform-box: fill-box; transform-origin: top left; }
-.graph-lane rect { fill: color-mix(in oklch, var(--surface) 20%, transparent); stroke: color-mix(in oklch, var(--border) 62%, transparent); stroke-width: 1; stroke-dasharray: 2 7; vector-effect: non-scaling-stroke; transition: width 500ms var(--ease-out), height 500ms var(--ease-out), fill 300ms var(--ease); }
+.graph-lane rect { fill: color-mix(in oklch, var(--surface) 20%, transparent); stroke: color-mix(in oklch, var(--border) 62%, transparent); stroke-width: 1; stroke-dasharray: 2 7; vector-effect: non-scaling-stroke; transition: fill 300ms var(--ease); }
 .graph-lane.empty rect { fill: color-mix(in oklch, var(--surface) 10%, transparent); }
 .graph-lane.compact rect { display: none; }
 .graph-lane-label { fill: var(--text-3); font: 500 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+.graph-lane.territory-region rect { fill: color-mix(in oklch, var(--surface) 24%, transparent); stroke: color-mix(in oklch, var(--border) 72%, transparent); stroke-dasharray: 2 8; }
+.graph-lane.plugin-subregion rect { fill: color-mix(in oklch, var(--surface-raised) 18%, transparent); stroke: color-mix(in oklch, var(--border-strong) 54%, transparent); stroke-dasharray: 1 6; }
+.graph-lane.plugin-subregion .graph-lane-label { font-size: 9px; letter-spacing: .08em; }
+.containment-guide { fill: none; stroke: color-mix(in oklch, var(--border-strong) 64%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; opacity: .72; transition: opacity 320ms var(--ease); }
+.containment-guide.entering,
+.containment-guide.leaving { opacity: 0; }
 
 .graph-edge { fill: none; stroke: var(--border-strong); stroke-width: 1.15; vector-effect: non-scaling-stroke; transition: stroke 360ms var(--ease), opacity 360ms var(--ease), filter 360ms var(--ease); }
 .graph-edge.link { stroke-dasharray: 4 5; }
@@ -155,6 +161,7 @@ svg { display: block; }
 
 .graph-node { cursor: pointer; transition: opacity 400ms var(--ease); }
 .graph-node.future { opacity: 0; pointer-events: none; }
+.graph-node.filtered { display: none; }
 .graph-node.provisional { opacity: .68; }
 .graph-node.provisional .place-card { border-color: color-mix(in oklch, var(--declared) 55%, var(--border)); border-style: dashed; background: color-mix(in oklch, var(--surface) 82%, transparent); box-shadow: 0 0 20px color-mix(in oklch, var(--declared) 10%, transparent); }
 .graph-node.unconfirmed { opacity: .72; }
@@ -182,6 +189,10 @@ svg { display: block; }
 @keyframes declared-pulse { 50% { box-shadow: 0 0 0 5px transparent; } 0%, 100% { box-shadow: 0 0 0 1px color-mix(in oklch, var(--declared) 42%, transparent); } }
 .place-identity { min-height: 74px; padding: 12px 14px 11px; }
 .place-identity.without-state { min-height: 52px; }
+.graph-node.tombstone .place-card { border-color: color-mix(in oklch, var(--border) 70%, transparent); background: color-mix(in oklch, var(--surface) 72%, var(--canvas)); }
+.graph-node.tombstone .place-band { border-bottom-color: transparent; }
+.graph-node.tombstone .place-identity.tombstone { min-height: 28px; padding: 2px 14px 5px 33px; }
+.graph-node.tombstone .place-name { display: block; overflow: hidden; color: var(--text-2); font: 500 12px/1.5 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .place-name { display: -webkit-box; overflow: hidden; color: var(--text); font-size: 15px; font-weight: 590; line-height: 1.35; letter-spacing: -.005em; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .place-state { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font: 13px/1.35 var(--mono); }
 .change-tail { border-top: 1px solid color-mix(in oklch, var(--border) 55%, transparent); }
@@ -208,6 +219,10 @@ svg { display: block; }
 .graph-control svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .graph-control.fit { border-left: 1px solid var(--border); border-radius: 0 4px 4px 0; }
 .graph-zoom { min-width: 38px; color: var(--text-3); font: 11px/1 var(--mono); text-align: center; }
+.territory-filters { position: absolute; right: 12px; bottom: 12px; z-index: 4; display: flex; max-width: calc(100% - 180px); gap: 2px; padding: 2px; overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--band); }
+.territory-filter { min-height: 28px; padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: var(--text-3); font: 11px/1 var(--mono); white-space: nowrap; cursor: pointer; }
+.territory-filter:hover { background: var(--surface-raised); color: var(--text-2); }
+.territory-filter[aria-pressed="true"] { background: var(--surface-raised); color: var(--text); }
 
 .empty-board { position: absolute; top: 38px; left: 38px; max-width: 62ch; color: var(--text-2); font-size: 14px; }
 .empty-board p { margin: 0; }

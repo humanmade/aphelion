@@ -43,9 +43,12 @@ function isLocalRequest(request) {
 function safeAsset(urlPath) {
   if (urlPath === '/') return path.join(PUBLIC_ROOT, 'index.html')
   if (urlPath === '/assets/reducer.mjs') return path.join(PACKAGE_ROOT, 'src', 'trail', 'reducer.mjs')
+  if (urlPath === '/assets/topology-version.mjs') return path.join(PACKAGE_ROOT, 'src', 'trail', 'topology-version.mjs')
   if (urlPath === '/assets/replay.mjs') return path.join(PACKAGE_ROOT, 'src', 'replay', 'index.mjs')
   if (urlPath === '/assets/topology.mjs') return path.join(PACKAGE_ROOT, 'src', 'board', 'topology.mjs')
   if (urlPath === '/trail/reducer.mjs') return path.join(PACKAGE_ROOT, 'src', 'trail', 'reducer.mjs')
+  if (urlPath === '/trail/topology-version.mjs') return path.join(PACKAGE_ROOT, 'src', 'trail', 'topology-version.mjs')
+  if (urlPath === '/wordpress/containment.mjs') return path.join(PACKAGE_ROOT, 'src', 'wordpress', 'containment.mjs')
   if (!urlPath.startsWith('/assets/')) return null
   const relative = urlPath.slice('/assets/'.length)
   if (!/^[a-z0-9][a-z0-9._/-]*$/i.test(relative) || relative.includes('..')) return null
@@ -79,7 +82,7 @@ export async function startDaemon(options = {}) {
   const targetType = options.targetType || 'project'
   const target = targetType === 'site' ? String(options.target) : path.resolve(options.target || process.cwd())
   const planPath = targetType === 'project' ? path.join(target, 'PLAN.md') : null
-  const writerOptions = { target, targetType, integrity: options.integrity, agent: options.agent, version: options.version || '0.1.0', trailDirectory: options.trailDirectory }
+  const writerOptions = { target, targetType, integrity: options.integrity, agent: options.agent, version: options.version || '0.1.0', topologyVersion: options.topologyVersion, trailDirectory: options.trailDirectory }
   let writer = createTrailWriter(writerOptions)
   let projection = projectEvents(await readTrail(writer.path))
   let plan = parsePlan(planPath && fs.existsSync(planPath) ? fs.readFileSync(planPath, 'utf8') : '')

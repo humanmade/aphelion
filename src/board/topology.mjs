@@ -1,4 +1,9 @@
 // Site-entity projection: trail events resolve onto durable WordPress nouns.
+import { recordedTopologyVersion } from '../trail/topology-version.mjs'
+import { containmentFor, observedParentRelation, TERRITORY_LABELS, TERRITORY_ORDER } from '../wordpress/containment.mjs'
+
+export const FULL_FIT_PLACE_LIMIT = 24
+export const OVERVIEW_IDLE_EDGE_LIMIT = 24
 
 const TERMINAL_PHASES = new Set(['close', 'disconnect', 'error', 'timeout'])
 const DECLARED_KINDS = /(?:\.call|\.declared)$/
@@ -423,7 +428,7 @@ function propertyRows(event, classification) {
   return rows
 }
 
-function analyze(events, requestTargets) {
+function analyze(events, requestTargets, topologyVersion = 1) {
   const entities = new Map()
   const entityOrder = []
   const edges = new Map()
@@ -435,10 +440,13 @@ function analyze(events, requestTargets) {
     const direct = resolveTopologyEntity(event)
     const previous = entities.get(key)
     const fallback = direct || provisionalEntity(key, event) || { key, identity: key.split(':').at(-1), type: 'object', category: 'objects', title: titleCase(key.split(':').at(-1)), plugin: null }
+    const containment = topologyVersion > 1 ? containmentFor(fallback, event) : null
     if (!previous) {
       entityOrder.push(key)
       entities.set(key, {
         ...fallback,
+        ...(containment || {}),
+        ...(topologyVersion > 1 ? { topologyVersion, parentId: null, parentHistory: [] } : {}),
         firstSeq: event.seq,
         lastSeq: event.seq,
         declaredCount: 0,
@@ -510,6 +518,18 @@ function analyze(events, requestTargets) {
         entity.type = merged.type
         entity.category = merged.category
         entity.provisionalIdentity = merged.provisionalIdentity
+        if (topologyVersion > 1) {
+          const containment = containmentFor(entity, event)
+          entity.territory = containment.territory
+          entity.ownerPlugin = containment.ownerPlugin || entity.ownerPlugin || null
+          if (classification === 'observed') {
+            const relation = observedParentRelation(event, entity)
+            if (relation.present) {
+              entity.parentId = relation.parentId
+              entity.parentHistory.push({ seq: event.seq, ts: event.ts, parentId: relation.parentId })
+            }
+          }
+        }
         entity.summary = eventSummary(event)
         entity.history.push({
           seq: event.seq,
@@ -521,7 +541,10 @@ function analyze(events, requestTargets) {
           transport: transport(event),
           actor: actor(event),
           requestId: id,
-          state: stateData(event),
+          state: {
+            ...stateData(event),
+            ...(topologyVersion > 1 ? { parentId: entity.parentId, territory: entity.territory, ownerPlugin: entity.ownerPlugin } : {}),
+          },
         })
         if (classification === 'declared') entity.declaredCount++
         if (classification === 'observed') entity.observedCount++
@@ -595,10 +618,18 @@ function analyze(events, requestTargets) {
 
 function serializeEntity(entity, order, visibility, edges, seen = true, sessionEnded = false) {
   const relatedEdges = edges.filter(edge => edge.to === entity.key)
+  const containment = entity.topologyVersion > 1 ? {
+    territory: entity.territory || 'general',
+    territoryLabel: TERRITORY_LABELS[entity.territory] || TERRITORY_LABELS.general,
+    parentId: entity.parentId || null,
+    parentHistory: entity.parentHistory || [],
+    ownerPlugin: entity.ownerPlugin || null,
+  } : {}
   const changes = seen ? changeRecords(entity.history, sessionEnded) : []
   const latestChange = changes.at(-1) || null
   if (visibility === 'blueprint-future') return {
     id: entity.key,
+    ...containment,
     key: entity.key,
     identity: entity.identity,
     type: entity.type,
@@ -624,6 +655,7 @@ function serializeEntity(entity, order, visibility, edges, seen = true, sessionE
   }
   return {
     id: entity.key,
+    ...containment,
     key: entity.key,
     identity: entity.identity,
     type: entity.type,
@@ -656,9 +688,10 @@ function serializeEntity(entity, order, visibility, edges, seen = true, sessionE
 export function buildSiteTopology(events, options = {}) {
   const visibleEvents = Array.from(events || [])
   const blueprintEvents = Array.from(options.blueprintEvents || visibleEvents)
+  const topologyVersion = recordedTopologyVersion(blueprintEvents)
   const requestTargets = buildRequestTargets(blueprintEvents)
-  const blueprint = analyze(blueprintEvents, requestTargets)
-  const visible = analyze(visibleEvents, requestTargets)
+  const blueprint = analyze(blueprintEvents, requestTargets, topologyVersion)
+  const visible = analyze(visibleEvents, requestTargets, topologyVersion)
   const blueprintEdges = [...blueprint.edges.values()]
   const visibleEdges = [...visible.edges.values()]
   const visibleEdgeById = new Map(visibleEdges.map(edge => [edge.id, edge]))
@@ -680,7 +713,7 @@ export function buildSiteTopology(events, options = {}) {
     }
   })
   const sessionEnded = visibleEvents.some(event => event?.kind === 'session.end')
-  const nodes = blueprint.entityOrder.map((key, order) => {
+  let nodes = blueprint.entityOrder.map((key, order) => {
     const blueprintEntity = blueprint.entities.get(key)
     const visibleEntity = visible.entities.get(key)
     const visibility = visibleEntity?.observedCount
@@ -707,6 +740,23 @@ export function buildSiteTopology(events, options = {}) {
   const focusChange = focusEdge
     ? [...allChanges].reverse().find(change => change.placeId === focusEdge.to && (!focusEdge.lastRequestId || change.requestId === focusEdge.lastRequestId)) || null
     : null
+  const visibleNodeIds = new Set(nodes.filter(node => !node.future).map(node => node.id))
+  const containments = topologyVersion > 1 ? nodes
+    .filter(node => !node.future && node.parentId && visibleNodeIds.has(node.parentId))
+    .map(node => ({ id: `containment:${node.id}:${node.parentId}`, childId: node.id, parentId: node.parentId })) : []
+  if (topologyVersion > 1) {
+    const parents = new Set(containments.map(relation => relation.parentId))
+    nodes = nodes.map(node => ({
+      ...node,
+      sizeTier: !node.future
+        && !parents.has(node.id)
+        && /^(?:Deleted|Trash)(?:\s|·|$)/.test(text(node.stateLine))
+        && !node.active
+        && (sessionEnded || !node.current)
+        ? 'tombstone'
+        : 'standard',
+    }))
+  }
   return {
     root: {
       id: 'wp:site',
@@ -734,10 +784,193 @@ export function buildSiteTopology(events, options = {}) {
     currentTargets: visible.currentTargets,
     changes: allChanges,
     focus: focusChange && focusEdge ? { change: focusChange, edge: focusEdge, place: nodes.find(node => node.id === focusEdge.to) || null } : null,
+    ...(topologyVersion > 1 ? {
+      topologyVersion,
+      territories: TERRITORY_ORDER.map(id => ({ id, label: TERRITORY_LABELS[id] })),
+      containments,
+    } : {}),
   }
 }
 
+const topologyChangeKey = change => change.confirmation?.kind || (change.status === 'in-flight' ? 'in-flight' : change.verb || 'change')
+
+export function groupTopologyChanges(changes = []) {
+  const groups = []
+  for (const change of changes.filter(change => !/^_?wp_trash_meta(?:_|$)/i.test(text(change.state?.metaKey || change.confirmation?.state?.metaKey)))) {
+    const previous = groups.at(-1)
+    const sameKind = previous && topologyChangeKey(previous.at(-1)) === topologyChangeKey(change)
+    const bothConfirmed = previous && previous.at(-1).status === 'confirmed' && change.status === 'confirmed'
+    const sameRequest = previous?.at(-1).requestId && previous.at(-1).requestId === change.requestId
+    if (sameKind && (bothConfirmed || sameRequest)) previous.push(change)
+    else groups.push([change])
+  }
+  return groups
+}
+
+function runSemantic(change) {
+  const kind = change.confirmation?.kind || ''
+  const properties = change.state?.changedProperties || change.confirmation?.state?.changedProperties || []
+  if (kind === 'wp.post.updated' && properties.length && properties.every(property => ['title', 'name'].includes(text(property).toLowerCase()))) return 'rename'
+  if (kind === 'wp.post.updated' && properties.includes('content')) return 'block-edit'
+  if (kind.startsWith('wp.post_meta.')) return `metadata-${kind.split('.').at(-1)}`
+  const verb = text(change.verb).replace(/…$/, '').toLowerCase()
+  return ({ renamed: 'rename', updated: 'update', restored: 'restore', created: 'create', deleted: 'delete', trashed: 'trash', executed: 'execute', changed: 'change' })[verb] || verb || 'change'
+}
+
+export function topologyRunLabel(group = []) {
+  const semantics = [...new Set(group.map(runSemantic))]
+  if (semantics.length === 1) return ({
+    rename: 'renames',
+    'block-edit': 'block edits',
+    update: 'updates',
+    restore: 'restorations',
+    create: 'creations',
+    delete: 'deletions',
+    trash: 'trash actions',
+    execute: 'executions',
+    change: 'changes',
+    'metadata-updated': 'metadata updates',
+    'metadata-created': 'metadata creations',
+    'metadata-deleted': 'metadata deletions',
+  })[semantics[0]] || `${semantics[0].replaceAll('-', ' ')} changes`
+  const kind = group.at(-1)?.confirmation?.kind || ''
+  if (kind.startsWith('wp.post_meta.')) return 'metadata changes'
+  if (kind === 'wp.post.updated') return 'updates'
+  return 'changes'
+}
+
+export function siteCardHeight(item, options = {}) {
+  if (item?.sizeTier === 'tombstone') return 58
+  const groups = groupTopologyChanges(item?.changes || [])
+  const stateLine = text(item?.stateLine)
+  const base = 30 + (stateLine && stateLine !== 'No state recorded' && !item?.future ? 74 : 52)
+  if (!groups.length) return base
+  const visibleRows = options.expanded ? Math.min(groups.length, 8) : Math.min(groups.length, 3)
+  return base + visibleRows * 29 + (groups.length > 3 ? 29 : 0)
+}
+
+export function buildSiteFrame(events, options = {}) {
+  const topology = buildSiteTopology(events, options)
+  const nodeHeights = {
+    [topology.root.id]: siteCardHeight({ ...topology.root, changes: [] }),
+    ...Object.fromEntries(topology.nodes.map(node => [node.id, siteCardHeight(node)])),
+  }
+  const layout = layoutSiteTopology(topology, { ...options, nodeHeights: options.nodeHeights || nodeHeights })
+  return { topology, layout, nodeHeights: options.nodeHeights || nodeHeights }
+}
+
+function consecutiveGroups(values) {
+  const groups = []
+  for (const value of [...new Set(values)].toSorted((left, right) => left - right)) {
+    if (groups.at(-1)?.at(-1) === value - 1) groups.at(-1).push(value)
+    else groups.push([value])
+  }
+  return groups
+}
+
+function layoutContainmentTopology(topology, options = {}) {
+  const compact = Boolean(options.compact)
+  const padX = options.padX ?? (compact ? 24 : 42)
+  const padY = options.padY ?? (compact ? 56 : 44)
+  const nodeW = options.nodeW ?? 320
+  const nodeH = options.nodeH ?? (compact ? 238 : 220)
+  const gapX = options.gapX ?? (compact ? 38 : 112)
+  const gapY = options.gapY ?? (compact ? 28 : 24)
+  const columns = compact ? 1 : Math.max(1, Number(options.layoutSeed?.desktopWrapColumns || 4))
+  const nodeHeights = options.nodeHeights || {}
+  const laneStartX = padX + nodeW + gapX
+  const rowStep = nodeH + gapY
+  const placed = [{ ...topology.root, x: padX, y: padY, depth: 0 }]
+  const rowOwners = new Map()
+  const territoryState = new Map()
+  const slots = new Map()
+
+  const firstFreeRow = start => {
+    let row = start
+    while (rowOwners.has(row)) row++
+    return row
+  }
+  const orderedNodes = [...topology.nodes].toSorted((left, right) => {
+    const leftRank = TERRITORY_ORDER.indexOf(left.territory || 'general')
+    const rightRank = TERRITORY_ORDER.indexOf(right.territory || 'general')
+    return leftRank - rightRank || left.order - right.order
+  })
+  for (const node of orderedNodes) {
+    const territory = node.territory || 'general'
+    let state = territoryState.get(territory)
+    if (!state) {
+      const row = firstFreeRow(0)
+      rowOwners.set(row, territory)
+      state = { row, column: 0 }
+      territoryState.set(territory, state)
+    }
+    if (state.column >= columns) {
+      let row = state.row + 1
+      while (rowOwners.has(row) && rowOwners.get(row) !== territory) row++
+      rowOwners.set(row, territory)
+      state.row = row
+      state.column = 0
+    }
+    const placedNode = {
+      ...node,
+      x: laneStartX + state.column * (nodeW + gapX),
+      y: padY + state.row * rowStep,
+      depth: TERRITORY_ORDER.indexOf(territory) + 1,
+    }
+    placed.push(placedNode)
+    slots.set(node.id, { territory, row: state.row, column: state.column })
+    state.column++
+  }
+
+  const visible = placed.filter(node => node.id === 'wp:site' || !node.future)
+  const regions = []
+  for (const territory of TERRITORY_ORDER) {
+    const territoryNodes = visible.filter(node => node.id !== 'wp:site' && slots.get(node.id)?.territory === territory)
+    if (!territoryNodes.length) continue
+    const rows = territoryNodes.map(node => slots.get(node.id).row)
+    consecutiveGroups(rows).forEach((rowGroup, fragmentIndex) => {
+      const fragmentNodes = territoryNodes.filter(node => rowGroup.includes(slots.get(node.id).row))
+      const left = Math.min(...fragmentNodes.map(node => node.x)) - 24
+      const top = Math.min(...fragmentNodes.map(node => node.y)) - 24
+      const right = Math.max(...fragmentNodes.map(node => node.x + nodeW)) + 24
+      const bottom = Math.max(...fragmentNodes.map(node => node.y + (nodeHeights[node.id] || nodeH))) + 24
+      regions.push({
+        id: `territory:${territory}:${fragmentIndex}`,
+        kind: 'territory',
+        territory,
+        category: territory,
+        label: TERRITORY_LABELS[territory] || TERRITORY_LABELS.general,
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+        labelX: left + 12,
+        labelY: top + 16,
+      })
+    })
+  }
+
+  const pluginGroups = new Map()
+  for (const node of visible.filter(node => node.id !== 'wp:site' && node.ownerPlugin && slots.get(node.id)?.territory === 'plugins')) {
+    const key = node.ownerPlugin.id
+    if (!pluginGroups.has(key)) pluginGroups.set(key, { plugin: node.ownerPlugin, nodes: [] })
+    pluginGroups.get(key).nodes.push(node)
+  }
+  for (const { plugin, nodes } of pluginGroups.values()) {
+    const left = Math.min(...nodes.map(node => node.x)) - 10
+    const top = Math.min(...nodes.map(node => node.y)) - 10
+    const right = Math.max(...nodes.map(node => node.x + nodeW)) + 10
+    const bottom = Math.max(...nodes.map(node => node.y + (nodeHeights[node.id] || nodeH))) + 10
+    regions.push({ id: `plugin-region:${plugin.id}`, kind: 'plugin', territory: 'plugins', category: 'plugins', plugin, label: plugin.label, x: left, y: top, width: right - left, height: bottom - top, labelX: left + 10, labelY: top + 14 })
+  }
+
+  const maxX = Math.max(...placed.map(node => node.x + nodeW), padX + nodeW)
+  const maxY = Math.max(...placed.map(node => node.y + nodeH), padY + nodeH)
+  return { nodes: placed, lanes: regions, regions, slots: Object.fromEntries(slots), edges: topology.edges, width: maxX + padX, height: maxY + padY, nodeW, nodeH }
+}
+
 export function layoutSiteTopology(topology, options = {}) {
+  if (topology.topologyVersion > 1) return layoutContainmentTopology(topology, options)
   const compact = Boolean(options.compact)
   const padX = options.padX ?? (compact ? 24 : 52)
   const padY = options.padY ?? (compact ? 132 : 72)
@@ -827,4 +1060,183 @@ export function layoutSiteTopology(topology, options = {}) {
     nodeW,
     nodeH,
   }
+}
+
+export function routeSiteTopologyEdges(nodes, edges, options = {}) {
+  const compact = Boolean(options.compact)
+  const nodeW = options.nodeW ?? 320
+  const metrics = options.metrics || {}
+  const heightOf = id => metrics[id]?.h || metrics[id] || 104
+  const byId = Object.fromEntries(nodes.map(node => [node.id, node]))
+  const channelTrunks = new Map()
+  const channelRowBranches = new Map()
+  const siteEdges = edges.filter(edge => edge.kind === 'channel' && (byId[edge.from]?.topologyRoot || edge.from === 'wp:site'))
+  const root = byId['wp:site']
+  if (!compact && root && siteEdges.length) {
+    const firstLaneX = Math.min(...siteEdges.map(edge => byId[edge.to]?.x).filter(Number.isFinite))
+    const channels = [...new Set(siteEdges.map(edge => edge.channel))]
+    for (const [index, channel] of channels.entries()) channelTrunks.set(channel, Math.max(root.x + nodeW + 4, firstLaneX - 24 - index * 14))
+    for (const edge of siteEdges) {
+      const target = byId[edge.to]
+      if (!target) continue
+      const key = `${edge.channel}:${target.y}`
+      channelRowBranches.set(key, Math.max(channelRowBranches.get(key) || 0, target.y + heightOf(target.id) + 12))
+    }
+  }
+  const edgeGroups = new Map()
+  for (const edge of edges) (edgeGroups.get(edge.to) || edgeGroups.set(edge.to, []).get(edge.to)).push(edge)
+  const laneOffsets = new Map()
+  for (const list of edgeGroups.values()) list.forEach((edge, index) => laneOffsets.set(edge.id, (index - (list.length - 1) / 2) * 12))
+
+  return edges.map(edge => {
+    const from = byId[edge.from]
+    const to = byId[edge.to]
+    if (!from || !to) return { ...edge, path: null }
+    const laneOffset = laneOffsets.get(edge.id) || 0
+    const trunkX = channelTrunks.get(edge.channel)
+    let path
+    let pathPoints
+    let sentencePoints
+    if (trunkX !== undefined && edge.kind === 'channel' && (from.topologyRoot || edge.from === 'wp:site')) {
+      const branchY = channelRowBranches.get(`${edge.channel}:${to.y}`)
+      path = `M${from.x + nodeW} ${from.y + 15}H${trunkX}V${branchY}H${to.x - 12}V${to.y + 15}H${to.x}`
+      pathPoints = [[from.x + nodeW, from.y + 15], [trunkX, from.y + 15], [trunkX, branchY], [to.x - 12, branchY], [to.x - 12, to.y + 15], [to.x, to.y + 15]]
+      sentencePoints = pathPoints.slice(-3)
+    } else if (Math.abs(from.x - to.x) < 30 || compact) {
+      const x1 = from.x + nodeW / 2 + laneOffset
+      const y1 = from.y + heightOf(from.id)
+      const x2 = to.x + nodeW / 2 + laneOffset
+      const y2 = to.y
+      const bend = Math.max(38, Math.abs(y2 - y1) / 2)
+      path = `M${x1} ${y1}C${x1} ${y1 + bend} ${x2} ${y2 - bend} ${x2} ${y2}`
+      pathPoints = [[x1, y1], [x1, y1 + bend], [x2, y2 - bend], [x2, y2]]
+      sentencePoints = [[x2, y2 - 24], [x2, y2]]
+    } else {
+      const forward = to.x >= from.x
+      const x1 = from.x + (forward ? nodeW : 0)
+      const y1 = from.y + 15 + laneOffset
+      const x2 = to.x + (forward ? 0 : nodeW)
+      const y2 = to.y + 15 + laneOffset
+      const bend = Math.max(44, Math.abs(x2 - x1) / 2)
+      path = `M${x1} ${y1}C${x1 + (forward ? bend : -bend)} ${y1} ${x2 + (forward ? -bend : bend)} ${y2} ${x2} ${y2}`
+      pathPoints = [[x1, y1], [x1 + (forward ? bend : -bend), y1], [x2 + (forward ? -bend : bend), y2], [x2, y2]]
+      sentencePoints = pathPoints.slice(-2)
+    }
+    const resting = edge.kind === 'channel' && !edge.active && !edge.current
+    const vertical = Math.abs(from.x - to.x) < 30 || compact
+    const xs = pathPoints.map(point => point[0])
+    const ys = pathPoints.map(point => point[1])
+    const sentenceXs = sentencePoints.map(point => point[0])
+    const sentenceYs = sentencePoints.map(point => point[1])
+    return {
+      ...edge,
+      laneOffset,
+      path,
+      labelX: resting ? (trunkX ?? from.x + nodeW) + 8 : vertical ? to.x + nodeW / 2 + laneOffset : to.x - 18,
+      labelY: resting ? from.y + 19 + (edge.channelLabelIndex || 0) * (options.edgeLabelStep || 17) : vertical ? to.y - 12 : to.y - 10,
+      labelAnchor: resting ? 'start' : vertical ? 'middle' : 'end',
+      bounds: { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) },
+      sentenceBounds: { x: Math.min(...sentenceXs), y: Math.min(...sentenceYs), width: Math.max(...sentenceXs) - Math.min(...sentenceXs), height: Math.max(...sentenceYs) - Math.min(...sentenceYs) },
+    }
+  })
+}
+
+export function routeContainmentElbows(nodes, containments, options = {}) {
+  const nodeW = options.nodeW ?? 320
+  const metrics = options.metrics || {}
+  const heightOf = id => metrics[id]?.h || metrics[id] || 104
+  const byId = Object.fromEntries(nodes.map(node => [node.id, node]))
+  return containments.map(relation => {
+    const parent = byId[relation.parentId]
+    const child = byId[relation.childId]
+    if (!parent || !child) return { ...relation, path: null }
+    const parentCenterY = parent.y + heightOf(parent.id) / 2
+    const childCenterY = child.y + heightOf(child.id) / 2
+    const forward = child.x >= parent.x
+    const fromX = parent.x + (forward ? nodeW : 0)
+    const toX = child.x + (forward ? 0 : nodeW)
+    const elbowX = fromX + (toX - fromX) / 2
+    return { ...relation, path: `M${fromX} ${parentCenterY}H${elbowX}V${childCenterY}H${toX}` }
+  })
+}
+
+export function visibleTopologyEdges(edges = [], placeCount = 0, options = {}) {
+  const limit = Math.max(1, Number(options.limit || OVERVIEW_IDLE_EDGE_LIMIT))
+  if (placeCount <= (options.fullFitLimit || FULL_FIT_PLACE_LIMIT) || edges.length <= limit) return [...edges]
+  return [...edges]
+    .toSorted((left, right) => Number(Boolean(right.active || right.current)) - Number(Boolean(left.active || left.current)) || (right.lastSeq || 0) - (left.lastSeq || 0))
+    .slice(0, limit)
+    .toSorted((left, right) => (left.lastSeq || 0) - (right.lastSeq || 0))
+}
+
+function unionBounds(bounds) {
+  const valid = bounds.filter(item => item && [item.x, item.y, item.width, item.height].every(Number.isFinite))
+  if (!valid.length) return { x: 0, y: 0, width: 1, height: 1 }
+  const left = Math.min(...valid.map(item => item.x))
+  const top = Math.min(...valid.map(item => item.y))
+  const right = Math.max(...valid.map(item => item.x + item.width))
+  const bottom = Math.max(...valid.map(item => item.y + item.height))
+  return { x: left, y: top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) }
+}
+
+function paddedAspectBounds(bounds, aspect, padding) {
+  let x = bounds.x - padding
+  let y = bounds.y - padding
+  let width = bounds.width + padding * 2
+  let height = bounds.height + padding * 2
+  const targetAspect = Number.isFinite(aspect) && aspect > 0 ? aspect : 16 / 9
+  if (width / height > targetAspect) {
+    const nextHeight = width / targetAspect
+    y -= (nextHeight - height) / 2
+    height = nextHeight
+  } else {
+    const nextWidth = height * targetAspect
+    x -= (nextWidth - width) / 2
+    width = nextWidth
+  }
+  return { x, y, width, height }
+}
+
+function minimumAspectBounds(bounds, aspect, minWidth, minHeight) {
+  const centerX = bounds.x + bounds.width / 2
+  const centerY = bounds.y + bounds.height / 2
+  const targetAspect = Number.isFinite(aspect) && aspect > 0 ? aspect : 16 / 9
+  let width = Math.max(bounds.width, minWidth || 0)
+  let height = Math.max(bounds.height, minHeight || 0)
+  if (width / height > targetAspect) height = width / targetAspect
+  else width = height * targetAspect
+  return { x: centerX - width / 2, y: centerY - height / 2, width, height }
+}
+
+function edgeLabelBounds(edge) {
+  if (!edge?.label || !Number.isFinite(edge.labelX) || !Number.isFinite(edge.labelY)) return null
+  const width = Math.max(36, text(edge.label).length * 7.4)
+  const x = edge.labelAnchor === 'start' ? edge.labelX : edge.labelX - width / 2
+  return { x, y: edge.labelY - 13, width, height: 17 }
+}
+
+export function topologyCameraFrames(input = {}, options = {}) {
+  const nodes = (input.nodes || []).filter(node => !node.future && !node.filtered)
+  const edges = (input.edges || []).filter(edge => !edge.future && edge.path)
+  const lanes = (input.lanes || []).filter(lane => !lane.hidden)
+  const metrics = input.metrics || {}
+  const nodeW = options.nodeW || input.nodeW || 320
+  const heightOf = id => metrics[id]?.h || metrics[id] || nodes.find(node => node.id === id)?.height || 104
+  const aspect = options.aspect || 16 / 9
+  const fullContent = unionBounds([
+    ...nodes.map(node => ({ x: node.x, y: node.y, width: nodeW, height: heightOf(node.id) })),
+    ...lanes.map(lane => ({ x: lane.x, y: lane.y, width: lane.width, height: lane.height })),
+    ...edges.map(edgeLabelBounds),
+  ])
+  const full = minimumAspectBounds(paddedAspectBounds(fullContent, aspect, options.fullPadding ?? 32), aspect, options.minWidth ?? 720, options.minHeight ?? 420)
+  const focusEdge = edges.find(edge => edge.current) || edges.find(edge => edge.active) || null
+  const target = focusEdge ? nodes.find(node => node.id === focusEdge.to) : null
+  const sentenceContent = target ? unionBounds([
+    focusEdge.sentenceBounds || focusEdge.bounds,
+    edgeLabelBounds(focusEdge),
+    { x: target.x, y: target.y, width: nodeW, height: heightOf(target.id) },
+  ]) : null
+  const sentence = sentenceContent ? minimumAspectBounds(paddedAspectBounds(sentenceContent, aspect, options.sentencePadding ?? 56), aspect, options.minWidth ?? 720, options.minHeight ?? 420) : null
+  const placeCount = nodes.filter(node => node.id !== 'wp:site').length
+  return { full, sentence, focusEdge, target, placeCount, mode: placeCount > (options.fullFitLimit || FULL_FIT_PLACE_LIMIT) && sentence ? 'sentence' : 'full' }
 }

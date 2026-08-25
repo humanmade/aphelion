@@ -44,6 +44,14 @@ files: [src/board/**]
   from: post-0.1 QA
 - [x] Refresh observed place names and wrap desktop lanes with a stable layout seed {#board-place-refresh-wrap}
   from: post-0.1 QA
+- [x] Version topology projections and render WordPress territories without changing place identity {#board-topology-v2}
+  from: containment model
+- [x] Draw observed parent relations as static containment guides {#board-containment-guides}
+  from: containment model
+- [x] Collapse repeated change runs, compact dead leaves, and bound large-map flow density {#board-scale-relief}
+  from: containment model
+- [x] Contain the active sentence, retain homogeneous run verbs, and fix territory order {#board-framing-language}
+  from: live QA
 
 ## Replay any session {#replay}
 tech: scrub UI over trail; sparse snapshot index for seeking
@@ -60,6 +68,8 @@ needs: [replay]
 files: [src/timelapse/**]
 - [x] Render a shareable timelapse from any trail {#timelapse-render}
   from: roadmap
+- [x] Render exported frames from the same topology and geometry as the browser board {#timelapse-parity}
+  from: containment model
 
 ## Ship it {#ship}
 tech: npm package "aphelion" (name free as of 2026-08-25), npx-first

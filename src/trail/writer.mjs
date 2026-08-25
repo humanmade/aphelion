@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createSessionId, resolveTrailPath } from './paths.mjs'
 import { redactPayload } from './redact.mjs'
+import { CURRENT_TOPOLOGY_VERSION, normalizeTopologyVersion } from './topology-version.mjs'
 
 function hashLine(line) {
   return crypto.createHash('sha256').update(line).digest('hex')
@@ -37,6 +38,7 @@ export class TrailWriter {
       targetType,
       agent: options.agent || null,
       aphelionVersion: options.version || '0.1.0',
+      topologyVersion: normalizeTopologyVersion(options.topologyVersion ?? CURRENT_TOPOLOGY_VERSION),
       hostname: options.hostname || os.hostname(),
       integrity: this.#integrity ? 'sha256-chain' : 'none',
     })

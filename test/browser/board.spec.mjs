@@ -3,9 +3,20 @@ import os from 'node:os'
 import path from 'node:path'
 import { test, expect } from '@playwright/test'
 import { startDaemon } from '../../src/index.mjs'
+import { renderFrameGeometry } from '../../src/timelapse/render.mjs'
 
 let daemon
 let root
+const qaRoot = path.resolve('qa-artifacts/2026-08-25/work-order-g')
+const qaHRoot = path.resolve('qa-artifacts/2026-08-25/work-order-h')
+const qaScreenshot = async (page, testInfo, name) => {
+  fs.mkdirSync(qaRoot, { recursive: true })
+  await page.screenshot({ path: path.join(qaRoot, `${name}-${testInfo.project.name}.png`) })
+}
+const qaHScreenshot = async (page, testInfo, name) => {
+  fs.mkdirSync(qaHRoot, { recursive: true })
+  await page.screenshot({ path: path.join(qaHRoot, `${name}-${testInfo.project.name}.png`) })
+}
 
 test.beforeAll(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-browser-'))
@@ -81,14 +92,13 @@ test('v3 keeps the map quiet while cards and inspector retain the evidence', asy
 
   expect(await page.locator('[data-node-id="wp:post:42"] .place-band').evaluate(element => getComputedStyle(element).height)).toBe('30px')
   expect(await page.locator('[data-node-id="wp:post:42"] .place-name').evaluate(element => getComputedStyle(element).fontSize)).toBe('15px')
-  await expect(page.locator('[data-node-id="wp:option:blogdescription"] .change-row')).toHaveCount(2)
-  await expect(page.locator('[data-node-id="wp:option:blogdescription"] .change-row').nth(0)).toContainText('Restored site tagline')
-  await expect(page.locator('[data-node-id="wp:option:blogdescription"] .change-row').nth(1)).toContainText('Edited site tagline temporarily')
+  await expect(page.locator('[data-node-id="wp:option:blogdescription"] .change-row')).toHaveCount(1)
+  await expect(page.locator('[data-node-id="wp:option:blogdescription"] .change-row')).toContainText('2 updates')
   await expect(page.locator('[data-node-id="wp:option:blogdescription"] .change-flag')).toHaveCount(0)
   expect((await page.locator('.change-row').allTextContents()).some(text => /via\s/i.test(text))).toBe(false)
 
   const pageCard = page.locator('[data-node-id="wp:post:42"]')
-  await expect(pageCard.locator('.change-row').first()).toContainText('3 metadata changes')
+  await expect(pageCard.locator('.change-row').first()).toContainText('3 metadata updates')
   await expect(pageCard.locator('.change-row').nth(1)).toContainText('Trashed')
   await expect(pageCard).not.toContainText(/_wp_|_yoast_|wpseo/i)
   await expect(page.locator('[data-node-id="wp:site"] .change-tail')).toHaveCount(0)
@@ -243,6 +253,22 @@ test('replay exposes its position and timelapse starts without pressing play', a
   await expect.poll(async () => Number(await page.getByRole('slider', { name: 'Replay position' }).inputValue())).toBeGreaterThan(linkedInitial)
 })
 
+test('exported timelapse frames share the board topology geometry', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'exported timelapse uses canonical desktop geometry')
+  const sessions = await fetch(`${daemon.url}/api/sessions`).then(response => response.json())
+  const sessionId = sessions[0].id
+  const events = (await fetch(`${daemon.url}/api/sessions/${encodeURIComponent(sessionId)}/events`).then(response => response.json())).filter(event => event.kind !== 'presence.heartbeat')
+  await page.goto(`${daemon.url}/?session=${encodeURIComponent(sessionId)}&mode=replay&seq=${events.at(-1).seq}`)
+  await expect(page.locator('.graph-node.entity')).toHaveCount(2)
+  const browserNodes = await page.locator('.graph-node:not(.future)').evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.dataset.nodeId, node.getAttribute('transform')])))
+  const browserEdges = await page.locator('.graph-edge.channel:not(.future)').evaluateAll(edges => Object.fromEntries(edges.map(edge => [edge.dataset.edgeId, edge.getAttribute('d')])))
+  const frame = renderFrameGeometry(events, events.length - 1)
+  const exportedNodes = Object.fromEntries(frame.nodes.filter(node => !node.future).map(node => [node.id, `translate(${node.x} ${node.y})`]))
+  const exportedEdges = Object.fromEntries(frame.edges.filter(edge => !edge.future && edge.path).map(edge => [edge.id, edge.path]))
+  expect(exportedNodes).toEqual(browserNodes)
+  expect(exportedEdges).toEqual(browserEdges)
+})
+
 test('an existing place shows one awaiting row while its flow is in flight', async ({ page }) => {
   const startedAt = Date.now()
   for (const event of [
@@ -295,7 +321,9 @@ test('site sessions show their root immediately and promote declared ghosts in p
     await expect(ghost).not.toHaveClass(/provisional/)
     expect(await page.evaluate(() => window.__ghostNode === document.querySelector('[data-node-id="wp:option:fresh_setting"]'))).toBe(true)
     for (let index = 0; index < 3; index++) await ingest({ source: 'wp', kind: 'wp.option.updated', data: { summary: `Fresh setting follow-up ${index + 1}`, requestId: `fresh-follow-up-${index}`, objectType: 'option', name: 'fresh_setting', channel: 'wp-cli', transport: 'process' } })
-    await expect(ghost.locator('.tail-more')).toHaveAttribute('aria-label', 'Show 1 earlier change for Fresh Setting')
+    await expect(ghost.locator('.change-row')).toHaveCount(1)
+    await expect(ghost.locator('.change-row')).toContainText('4 updates')
+    await expect(ghost.locator('.tail-more')).toHaveCount(0)
 
     await ingest({ source: 'agent', kind: 'agent.action.declared', data: { summary: 'Create a QA post', requestId: 'create-post', objectType: 'post', channel: 'wp-cli', transport: 'docker-exec' } })
     await ingest({ source: 'wp', kind: 'wp.post.created', data: { summary: 'QA post created', requestId: 'create-post', objectType: 'post', objectId: 901, title: 'QA post', status: 'draft', blockCount: 1, channel: 'wp-cli', transport: 'process' } })
@@ -329,9 +357,7 @@ test('site sessions show their root immediately and promote declared ghosts in p
     await expect(createGhost.locator('.place-name')).toHaveText('New post')
     await expect(page.locator('#playback-caption')).toContainText('New post')
     const createPosition = await createGhost.getAttribute('transform')
-    const rootPosition = await page.locator('[data-node-id="wp:site"]').getAttribute('transform')
-    const sharedAxis = page.viewportSize().width <= 680 ? 0 : 1
-    expect(createPosition.split(/\s+/)[sharedAxis]).toBe(rootPosition.split(/\s+/)[sharedAxis])
+    await expect(createGhost).toHaveAttribute('data-territory', 'content')
     await page.evaluate(() => { window.__createGhost = document.querySelector('[data-node-id="wp:post:901"]') })
     await page.getByRole('slider', { name: 'Replay position' }).fill(String(moments.createConfirmation))
     await expect(createGhost).not.toHaveClass(/provisional/)
@@ -358,7 +384,7 @@ test('twenty places occupy stable category lanes with one resting channel label'
     const after = await page.locator('.graph-node.entity').evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.dataset.nodeId, node.getAttribute('transform')])))
     for (const [id, transform] of Object.entries(before)) expect(after[id]).toBe(transform)
     await expect(page.locator('.graph-lane')).toHaveCount(1)
-    await expect(page.locator('.graph-lane-label')).toHaveText('content')
+    await expect(page.locator('.graph-lane-label')).toHaveText('Content')
     const gridShape = await page.locator('.graph-node.entity').evaluateAll(nodes => ({
       columns: new Set(nodes.map(node => node.getAttribute('transform').match(/translate\(([-\d.]+)/)?.[1])).size,
       rows: new Set(nodes.map(node => node.getAttribute('transform').match(/\s([-\d.]+)\)/)?.[1])).size,
@@ -396,6 +422,223 @@ test('twenty places occupy stable category lanes with one resting channel label'
     expect(replayPositions).toEqual(livePositions)
   } finally {
     await siteDaemon.close('lanes-test')
+    fs.rmSync(trailRoot, { recursive: true, force: true })
+  }
+})
+
+test('v2 containment renders territory and plugin regions in fixed territory order', async ({ page }) => {
+  const trailRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-containment-'))
+  const siteDaemon = await startDaemon({ target: 'http://localhost:8081', targetType: 'site', trailDirectory: path.join(trailRoot, 'trails'), port: 6350, watch: false })
+  const ingest = event => fetch(`${siteDaemon.url}/ingest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(event) })
+  try {
+    await ingest({ source: 'wp', kind: 'wp.option.updated', data: { objectType: 'option', name: 'blogdescription', channel: 'wp-cli' } })
+    await page.goto(siteDaemon.url)
+    const tagline = page.locator('[data-node-id="wp:option:blogdescription"]')
+    await expect(tagline).toHaveAttribute('data-territory', 'settings')
+    await ingest({ source: 'wp', kind: 'wp.post.updated', data: { objectType: 'post', objectId: 464, postType: 'page', title: 'Pricing', channel: 'wp-cli' } })
+    await ingest({ source: 'wp', kind: 'wp.option.updated', data: { objectType: 'option', name: 'accelerate_outbound_tracking_enabled', channel: 'wp-cli' } })
+    await expect(page.locator('.graph-node.entity')).toHaveCount(3)
+    await expect(page.locator('[data-node-id="wp:post:464"]')).toHaveAttribute('data-territory', 'content')
+    await expect(page.locator('[data-node-id="wp:option:accelerate_outbound_tracking_enabled"]')).toHaveAttribute('data-owner-plugin', 'altis-accelerate')
+    await expect(page.locator('[data-plugin-region="altis-accelerate"] .graph-lane-label')).toHaveText('Altis Accelerate')
+    await expect(page.locator('.graph-lane.territory-region')).toHaveCount(3)
+    const territoryTops = await page.locator('.graph-lane.territory-region').evaluateAll(regions => Object.fromEntries(regions.map(region => [region.dataset.territory, region.getBBox().y])))
+    expect(territoryTops.content).toBeLessThan(territoryTops.plugins)
+    expect(territoryTops.plugins).toBeLessThan(territoryTops.settings)
+  } finally {
+    await siteDaemon.close('containment-test')
+    fs.rmSync(trailRoot, { recursive: true, force: true })
+  }
+})
+
+test('v2 reparenting cross-fades a static guide and tombstones the same leaf in place', async ({ page }, testInfo) => {
+  const trailRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-reparent-'))
+  const siteDaemon = await startDaemon({ target: 'http://localhost:8081', targetType: 'site', trailDirectory: path.join(trailRoot, 'trails'), port: 6360, watch: false })
+  const ingest = event => fetch(`${siteDaemon.url}/ingest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(event) })
+  try {
+    await ingest({ source: 'wp', kind: 'wp.post.updated', data: { objectType: 'post', objectId: 100, postType: 'page', title: 'Parent one', status: 'publish', channel: 'wp-cli' } })
+    await ingest({ source: 'wp', kind: 'wp.post.updated', data: { objectType: 'post', objectId: 200, postType: 'page', title: 'Parent two', status: 'publish', channel: 'wp-cli' } })
+    await ingest({ source: 'wp', kind: 'wp.post.updated', data: { objectType: 'post', objectId: 300, postType: 'page', title: 'Child page', status: 'publish', parentId: 100, channel: 'wp-cli' } })
+    await page.goto(siteDaemon.url)
+    const child = page.locator('[data-node-id="wp:post:300"]')
+    const childPosition = await child.getAttribute('transform')
+    await page.evaluate(() => {
+      window.__reparentChild = document.querySelector('[data-node-id="wp:post:300"]')
+      window.__sawLeavingGuide = false
+      new MutationObserver(() => { if (document.querySelector('.containment-guide.leaving')) window.__sawLeavingGuide = true }).observe(document.querySelector('.graph-containments'), { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] })
+    })
+    const guide = page.locator('[data-containment-id="containment:wp:post:300:wp:post:100"]')
+    await expect(guide).toHaveCount(1)
+    expect(await guide.evaluate(element => getComputedStyle(element).pointerEvents)).toBe('none')
+    await expect(guide).not.toHaveAttribute('marker-end', /.+/)
+
+    await ingest({ source: 'wp', kind: 'wp.post.updated', data: { objectType: 'post', objectId: 300, postType: 'page', title: 'Child page', status: 'publish', parentId: 200, channel: 'wp-cli' } })
+    await expect(page.locator('[data-containment-id="containment:wp:post:300:wp:post:200"]')).toHaveCount(1)
+    await expect(guide).toHaveCount(0)
+    expect(await page.evaluate(() => window.__sawLeavingGuide)).toBe(true)
+    expect(await page.evaluate(() => window.__reparentChild === document.querySelector('[data-node-id="wp:post:300"]'))).toBe(true)
+    expect(await child.getAttribute('transform')).toBe(childPosition)
+
+    await ingest({ source: 'wp', kind: 'wp.option.updated', data: { objectType: 'option', name: 'accelerate_outbound_tracking_enabled', channel: 'wp-cli' } })
+    await expect(page.locator('[data-plugin-region="altis-accelerate"]')).toHaveCount(1)
+    await page.getByRole('button', { name: 'Fit graph to view' }).click()
+    await qaScreenshot(page, testInfo, 'reparent-plugin-option')
+
+    const cameraBeforeGrowth = await page.locator('.work-graph').getAttribute('viewBox')
+    await ingest({ source: 'wp', kind: 'wp.post.updated', data: { objectType: 'post', objectId: 400, postType: 'page', title: 'Later page', status: 'publish', channel: 'wp-cli' } })
+    await expect(page.locator('[data-node-id="wp:post:400"]')).toHaveCount(1)
+    expect(await page.locator('.work-graph').getAttribute('viewBox')).toBe(cameraBeforeGrowth)
+    await page.getByRole('button', { name: 'Fit graph to view' }).click()
+    expect(await page.locator('.work-graph').getAttribute('viewBox')).not.toBe(cameraBeforeGrowth)
+
+    await ingest({ source: 'wp', kind: 'wp.post.deleted', data: { objectType: 'post', objectId: 300, postType: 'page', title: 'Child page', parentId: 200, channel: 'wp-cli' } })
+    await ingest({ source: 'wp', kind: 'wp.option.updated', data: { objectType: 'option', name: 'blogdescription', channel: 'wp-cli' } })
+    await expect(child).toHaveAttribute('data-size-tier', 'tombstone')
+    await expect(child.locator('.place-card')).toHaveCSS('height', '58px')
+    expect(await child.getAttribute('transform')).toBe(childPosition)
+  } finally {
+    await siteDaemon.close('reparent-test')
+    fs.rmSync(trailRoot, { recursive: true, force: true })
+  }
+})
+
+test('v2 scale posture keeps 200 places navigable', async ({ page }, testInfo) => {
+  test.setTimeout(60_000)
+  const trailRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-scale-'))
+  const siteDaemon = await startDaemon({ target: 'http://localhost:8081', targetType: 'site', trailDirectory: path.join(trailRoot, 'trails'), port: 6370, watch: false })
+  const ingest = event => fetch(`${siteDaemon.url}/ingest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(event) })
+  try {
+    for (let index = 0; index < 200; index++) await ingest(index % 2 === 0
+      ? { source: 'wp', kind: 'wp.post.updated', data: { requestId: `scale-${index}`, objectType: 'post', objectId: index + 1, postType: 'page', title: `Scale page ${index + 1}`, status: 'publish', channel: 'wp-cli' } }
+      : { source: 'wp', kind: 'wp.option.updated', data: { requestId: `scale-${index}`, objectType: 'option', name: `scale_setting_${index + 1}`, channel: 'wp-cli' } })
+    await page.goto(siteDaemon.url)
+    await expect(page.locator('.graph-node.entity')).toHaveCount(200)
+    await expect(page.locator('.graph-edge.channel')).toHaveCount(24)
+    const focusedView = (await page.locator('.work-graph').getAttribute('viewBox')).split(/\s+/).map(Number)
+    expect(focusedView[2]).toBeLessThanOrEqual(720)
+    const viewport = page.viewportSize()
+    const expectedAspect = viewport.width / (viewport.height - 48)
+    expect(Math.abs(focusedView[2] / focusedView[3] - expectedAspect)).toBeLessThan(.03)
+    const focusContained = await page.evaluate(() => {
+      const canvas = document.querySelector('.map-surface').getBoundingClientRect()
+      const card = document.querySelector('[data-node-id="wp:option:scale_setting_200"] .place-card').getBoundingClientRect()
+      return card.left >= canvas.left - 1 && card.top >= canvas.top - 1 && card.right <= canvas.right + 1 && card.bottom <= canvas.bottom + 1
+    })
+    expect(focusContained).toBe(true)
+    await qaScreenshot(page, testInfo, '200-places')
+    const settingPosition = await page.locator('[data-node-id="wp:option:scale_setting_2"]').getAttribute('transform')
+    await expect(page.getByRole('toolbar', { name: 'Filter map by territory' })).toBeVisible()
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    await expect(page.locator('.graph-node.entity:not(.filtered)')).toHaveCount(100)
+    await expect(page.locator('.graph-edge.channel')).toHaveCount(24)
+    expect(await page.locator('[data-node-id="wp:option:scale_setting_2"]').getAttribute('transform')).toBe(settingPosition)
+    await page.getByRole('button', { name: 'All', exact: true }).click()
+    await expect(page.locator('.graph-node.entity:not(.filtered)')).toHaveCount(200)
+    const positions = await page.locator('.graph-node').evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.dataset.nodeId, node.getAttribute('transform')])))
+    await page.getByRole('tab', { name: 'Replay' }).click()
+    const replayPositions = await page.locator('.graph-node').evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.dataset.nodeId, node.getAttribute('transform')])))
+    expect(replayPositions).toEqual(positions)
+
+  } finally {
+    await siteDaemon.close('scale-test')
+    fs.rmSync(trailRoot, { recursive: true, force: true })
+  }
+})
+
+test('v2 keeps 300 edits on one page spatially singular', async ({ page }, testInfo) => {
+  test.setTimeout(60_000)
+  const trailRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-edits-'))
+  const siteDaemon = await startDaemon({ target: 'http://localhost:8081', targetType: 'site', trailDirectory: path.join(trailRoot, 'trails'), port: 6380, watch: false })
+  const ingest = event => fetch(`${siteDaemon.url}/ingest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(event) })
+  try {
+    for (let index = 0; index < 300; index++) await ingest({ source: 'wp', kind: 'wp.post.updated', data: { requestId: `edit-${index}`, objectType: 'post', objectId: 999, postType: 'page', title: 'One intensely edited page', status: 'draft', changedProperties: ['content'], channel: 'wp-cli' } })
+    await page.goto(siteDaemon.url)
+    await expect(page.locator('.graph-node.entity')).toHaveCount(1)
+    await expect(page.locator('[data-node-id="wp:post:999"] .change-row')).toHaveCount(1)
+    await expect(page.locator('[data-node-id="wp:post:999"] .change-row')).toContainText('300 block edits')
+    await qaScreenshot(page, testInfo, '300-edits-one-page')
+  } finally {
+    await siteDaemon.close('edits-test')
+    fs.rmSync(trailRoot, { recursive: true, force: true })
+  }
+})
+
+test('v2 full fit contains every card and channel label below the scale ceiling', async ({ page }, testInfo) => {
+  const trailRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-camera-small-'))
+  const siteDaemon = await startDaemon({ target: 'http://localhost:8081', targetType: 'site', trailDirectory: path.join(trailRoot, 'trails'), port: 6390, watch: false })
+  const ingest = event => fetch(`${siteDaemon.url}/ingest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(event) })
+  try {
+    await ingest({ source: 'wp', kind: 'wp.option.updated', data: { requestId: 'setting', objectType: 'option', name: 'blogdescription', channel: 'wp-cli' } })
+    await ingest({ source: 'wp', kind: 'wp.post.updated', data: { requestId: 'page', objectType: 'post', objectId: 464, postType: 'page', title: 'Camera QA page', status: 'publish', channel: 'wp-cli' } })
+    await ingest({ source: 'wp', kind: 'wp.option.updated', data: { requestId: 'plugin', objectType: 'option', name: 'accelerate_outbound_tracking_enabled', channel: 'wp-cli' } })
+    await page.goto(siteDaemon.url)
+    await expect(page.locator('.graph-node.entity')).toHaveCount(3)
+    const containment = await page.evaluate(() => {
+      const canvas = document.querySelector('.map-surface').getBoundingClientRect()
+      const subjects = [...document.querySelectorAll('.graph-node:not(.future):not(.filtered), .graph-edge-label:not([hidden])')]
+      const outside = subjects.filter(element => {
+        const rect = element.getBoundingClientRect()
+        return rect.left < canvas.left - 1 || rect.top < canvas.top - 1 || rect.right > canvas.right + 1 || rect.bottom > canvas.bottom + 1
+      }).map(element => element.dataset.nodeId || element.textContent)
+      return { outside, subjectCount: subjects.length }
+    })
+    expect(containment.subjectCount).toBeGreaterThan(3)
+    expect(containment.outside).toEqual([])
+    const defaultViewBox = await page.locator('.work-graph').getAttribute('viewBox')
+    await page.getByRole('button', { name: 'Fit graph to view' }).click()
+    expect(await page.locator('.work-graph').getAttribute('viewBox')).toBe(defaultViewBox)
+    const territoryTops = await page.locator('.graph-lane.territory-region').evaluateAll(regions => Object.fromEntries(regions.map(region => [region.dataset.territory, region.getBBox().y])))
+    expect(territoryTops.content).toBeLessThan(territoryTops.plugins)
+    expect(territoryTops.plugins).toBeLessThan(territoryTops.settings)
+    await qaHScreenshot(page, testInfo, '3-place-full-fit')
+  } finally {
+    await siteDaemon.close('camera-small-test')
+    fs.rmSync(trailRoot, { recursive: true, force: true })
+  }
+})
+
+test('v2 sentence framing centers and contains the active target above the ceiling', async ({ page }, testInfo) => {
+  const trailRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-camera-sentence-'))
+  const siteDaemon = await startDaemon({ target: 'http://localhost:8081', targetType: 'site', trailDirectory: path.join(trailRoot, 'trails'), port: 6400, watch: false })
+  const ingest = event => fetch(`${siteDaemon.url}/ingest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(event) })
+  try {
+    for (let index = 1; index <= 30; index++) await ingest({ source: 'wp', kind: 'wp.post.updated', data: { requestId: `seed-${index}`, objectType: 'post', objectId: index, postType: 'page', title: `Camera page ${index}`, status: 'publish', channel: 'wp-cli' } })
+    await ingest({ source: 'agent', kind: 'agent.action.declared', data: { requestId: 'active-camera', objectType: 'post', objectId: 30, postType: 'page', summary: 'Edit Camera page 30', channel: 'wp-cli' } })
+    await page.goto(siteDaemon.url)
+    const target = page.locator('[data-node-id="wp:post:30"]')
+    await expect(target).toHaveClass(/claimed/)
+    const activeViewBox = await page.locator('.work-graph').getAttribute('viewBox')
+    const framing = await page.evaluate(() => {
+      const canvas = document.querySelector('.map-surface').getBoundingClientRect()
+      const card = document.querySelector('[data-node-id="wp:post:30"] .place-card').getBoundingClientRect()
+      const label = document.querySelector('.graph-edge-label.active:not([hidden])').getBoundingClientRect()
+      return {
+        contained: card.left >= canvas.left - 1 && card.top >= canvas.top - 1 && card.right <= canvas.right + 1 && card.bottom <= canvas.bottom + 1 && label.left >= canvas.left - 1 && label.right <= canvas.right + 1,
+        dx: Math.abs((card.left + card.right) / 2 - (canvas.left + canvas.right) / 2) / canvas.width,
+        dy: Math.abs((card.top + card.bottom) / 2 - (canvas.top + canvas.bottom) / 2) / canvas.height,
+      }
+    })
+    expect(framing.contained).toBe(true)
+    expect(framing.dx).toBeLessThan(.14)
+    expect(framing.dy).toBeLessThan(.18)
+    await qaHScreenshot(page, testInfo, '30-place-active-sentence')
+
+    await page.getByRole('tab', { name: 'Replay' }).click()
+    expect(await page.locator('.work-graph').getAttribute('viewBox')).toBe(activeViewBox)
+    await page.getByRole('tab', { name: 'Live' }).click()
+    await ingest({ source: 'wp', kind: 'wp.post.updated', data: { requestId: 'active-camera', objectType: 'post', objectId: 30, postType: 'page', title: 'Camera page 30', status: 'publish', changedProperties: ['content'], channel: 'wp-cli' } })
+    await expect(target).not.toHaveClass(/claimed/)
+    expect(await page.locator('.work-graph').getAttribute('viewBox')).toBe(activeViewBox)
+    await ingest({ source: 'wp', kind: 'presence.close', data: { requestId: 'active-camera', connectionId: 'active-camera', channel: 'wp-cli' } })
+    expect(await page.locator('.work-graph').getAttribute('viewBox')).toBe(activeViewBox)
+    const settledContained = await page.evaluate(() => {
+      const canvas = document.querySelector('.map-surface').getBoundingClientRect()
+      const card = document.querySelector('[data-node-id="wp:post:30"] .place-card').getBoundingClientRect()
+      return card.left >= canvas.left - 1 && card.top >= canvas.top - 1 && card.right <= canvas.right + 1 && card.bottom <= canvas.bottom + 1
+    })
+    expect(settledContained).toBe(true)
+  } finally {
+    await siteDaemon.close('camera-sentence-test')
     fs.rmSync(trailRoot, { recursive: true, force: true })
   }
 })

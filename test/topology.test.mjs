@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildSiteTopology, displayChannel, layoutSiteTopology, resolveTopologyEntity } from '../src/board/topology.mjs'
+import { buildSiteTopology, displayChannel, FULL_FIT_PLACE_LIMIT, groupTopologyChanges, layoutSiteTopology, OVERVIEW_IDLE_EDGE_LIMIT, resolveTopologyEntity, routeContainmentElbows, siteCardHeight, topologyRunLabel, visibleTopologyEdges } from '../src/board/topology.mjs'
 
 const event = (seq, kind, data = {}, source = kind.startsWith('wp.') || kind.startsWith('presence.') ? 'wp' : 'agent') => ({
   v: 1,
@@ -9,6 +9,96 @@ const event = (seq, kind, data = {}, source = kind.startsWith('wp.') || kind.sta
   source,
   kind,
   data,
+})
+
+test('missing and explicit v1 sessions retain byte-identical topology semantics', () => {
+  const observed = event(2, 'wp.post.updated', { objectType: 'post', objectId: 464, postType: 'page', title: 'Legacy page', status: 'publish', channel: 'wp-cli' })
+  const missingVersion = buildSiteTopology([event(1, 'session.start', { target: 'http://localhost:8081' }, 'session'), observed])
+  const explicitV1 = buildSiteTopology([event(1, 'session.start', { target: 'http://localhost:8081', topologyVersion: 1 }, 'session'), observed])
+  const v2 = buildSiteTopology([event(1, 'session.start', { target: 'http://localhost:8081', topologyVersion: 2 }, 'session'), observed])
+
+  assert.equal(JSON.stringify(missingVersion), JSON.stringify(explicitV1))
+  assert.equal('topologyVersion' in missingVersion, false)
+  assert.equal(v2.topologyVersion, 2)
+  assert.equal(v2.nodes[0].id, missingVersion.nodes[0].id)
+})
+
+test('v2 projects stable WordPress territories and plugin sub-regions without changing place identity', () => {
+  const events = [
+    event(1, 'session.start', { target: 'http://localhost:8081', topologyVersion: 2 }, 'session'),
+    event(2, 'wp.post.updated', { objectType: 'post', objectId: 464, postType: 'page', title: 'Pricing', channel: 'wp-cli' }),
+    event(3, 'wp.option.updated', { objectType: 'option', name: 'accelerate_outbound_tracking_enabled', channel: 'wp-cli' }),
+    event(4, 'wp.option.updated', { objectType: 'option', name: 'blogdescription', channel: 'wp-cli' }),
+  ]
+  const topology = buildSiteTopology(events)
+  const byId = Object.fromEntries(topology.nodes.map(node => [node.id, node]))
+  assert.equal(byId['wp:post:464'].territory, 'content')
+  assert.equal(byId['wp:option:accelerate_outbound_tracking_enabled'].territory, 'plugins')
+  assert.deepEqual(byId['wp:option:accelerate_outbound_tracking_enabled'].ownerPlugin, { id: 'altis-accelerate', label: 'Altis Accelerate', source: 'prefix', confidence: 'medium' })
+  assert.equal(byId['wp:option:blogdescription'].territory, 'settings')
+  assert.deepEqual(topology.nodes.map(node => node.id), ['wp:post:464', 'wp:option:accelerate_outbound_tracking_enabled', 'wp:option:blogdescription'])
+  const layout = layoutSiteTopology(topology, { nodeW: 320, nodeH: 220, gapX: 112, gapY: 24, padX: 42, padY: 44, layoutSeed: { desktopWrapColumns: 4 } })
+  assert.ok(layout.regions.some(region => region.id === 'plugin-region:altis-accelerate' && region.label === 'Altis Accelerate'))
+
+  const reverseEvents = [events[0], events[3], events[2], events[1]]
+  const reverseLayout = layoutSiteTopology(buildSiteTopology(reverseEvents), { nodeW: 320, nodeH: 220, gapX: 112, gapY: 24, padX: 42, padY: 44, layoutSeed: { desktopWrapColumns: 4 } })
+  assert.deepEqual(layout.regions.filter(region => region.kind === 'territory').map(region => region.territory), ['content', 'plugins', 'settings'])
+  assert.deepEqual(reverseLayout.regions.filter(region => region.kind === 'territory').map(region => region.territory), ['content', 'plugins', 'settings'])
+  const positions = value => Object.fromEntries(value.nodes.filter(node => node.id !== 'wp:site').map(node => [node.id, [node.x, node.y]]))
+  assert.deepEqual(positions(reverseLayout), positions(layout))
+})
+
+test('v2 containment elbows follow only observed parent relations without moving the child', () => {
+  const events = [
+    event(1, 'session.start', { target: 'http://localhost:8081', topologyVersion: 2 }, 'session'),
+    event(2, 'wp.post.updated', { objectType: 'post', objectId: 100, postType: 'page', title: 'Parent one', status: 'publish', channel: 'wp-cli' }),
+    event(3, 'wp.post.updated', { objectType: 'post', objectId: 200, postType: 'page', title: 'Parent two', status: 'publish', channel: 'wp-cli' }),
+    event(4, 'wp.post.updated', { objectType: 'post', objectId: 300, postType: 'page', title: 'Child', status: 'publish', parentId: 100, channel: 'wp-cli' }),
+    event(5, 'wp.post.updated', { objectType: 'post', objectId: 300, postType: 'page', title: 'Child', status: 'publish', parentId: 200, channel: 'wp-cli' }),
+  ]
+  const options = { blueprintEvents: events, nodeW: 320, nodeH: 220, gapX: 112, gapY: 24, padX: 42, padY: 44, layoutSeed: { desktopWrapColumns: 4 } }
+  const beforeTopology = buildSiteTopology(events.slice(0, 4), { blueprintEvents: events })
+  const afterTopology = buildSiteTopology(events, { blueprintEvents: events })
+  const beforeLayout = layoutSiteTopology(beforeTopology, options)
+  const afterLayout = layoutSiteTopology(afterTopology, options)
+  const beforeChild = beforeLayout.nodes.find(node => node.id === 'wp:post:300')
+  const afterChild = afterLayout.nodes.find(node => node.id === 'wp:post:300')
+
+  assert.deepEqual(beforeTopology.containments, [{ id: 'containment:wp:post:300:wp:post:100', childId: 'wp:post:300', parentId: 'wp:post:100' }])
+  assert.deepEqual(afterTopology.containments, [{ id: 'containment:wp:post:300:wp:post:200', childId: 'wp:post:300', parentId: 'wp:post:200' }])
+  assert.deepEqual([afterChild.x, afterChild.y], [beforeChild.x, beforeChild.y])
+  const routed = routeContainmentElbows(afterLayout.nodes, afterTopology.containments, { nodeW: 320 })
+  assert.match(routed[0].path, /^M[\d.]+ [\d.]+H[\d.]+V[\d.]+H[\d.]+$/)
+
+  const missingParent = buildSiteTopology([events[0], events[3]])
+  assert.deepEqual(missingParent.containments, [])
+})
+
+test('v2 collapses consecutive cross-visit changes and compacts only playhead-dead leaves', () => {
+  const events = [
+    event(1, 'session.start', { target: 'http://localhost:8081', topologyVersion: 2 }, 'session'),
+    event(2, 'wp.post.created', { requestId: 'create', objectType: 'post', objectId: 464, postType: 'page', title: 'Disposable page', status: 'draft', channel: 'wp-cli' }),
+    event(3, 'wp.post.updated', { requestId: 'edit-a', objectType: 'post', objectId: 464, postType: 'page', title: 'Disposable page', status: 'draft', changedProperties: ['content'], channel: 'wp-cli' }),
+    event(4, 'wp.post.updated', { requestId: 'edit-b', objectType: 'post', objectId: 464, postType: 'page', title: 'Disposable page', status: 'draft', changedProperties: ['content'], channel: 'wp-cli' }),
+    event(5, 'wp.post.deleted', { requestId: 'delete', objectType: 'post', objectId: 464, postType: 'page', title: 'Disposable page', channel: 'wp-cli' }),
+    event(6, 'wp.option.updated', { requestId: 'later', objectType: 'option', name: 'blogdescription', channel: 'wp-cli' }),
+    event(7, 'session.end', {}, 'session'),
+  ]
+  const beforeDelete = buildSiteTopology(events.slice(0, 4), { blueprintEvents: events })
+  const afterDelete = buildSiteTopology(events.slice(0, 6), { blueprintEvents: events })
+  const beforePage = beforeDelete.nodes.find(node => node.id === 'wp:post:464')
+  const afterPage = afterDelete.nodes.find(node => node.id === 'wp:post:464')
+
+  assert.equal(beforePage.sizeTier, 'standard')
+  assert.equal(afterPage.sizeTier, 'tombstone')
+  assert.equal(siteCardHeight(afterPage), 58)
+  assert.equal(groupTopologyChanges(beforePage.changes).find(group => group[0].confirmation?.kind === 'wp.post.updated').length, 2)
+  const options = { blueprintEvents: events, layoutSeed: { desktopWrapColumns: 4 } }
+  const beforeLayout = layoutSiteTopology(beforeDelete, options)
+  const afterLayout = layoutSiteTopology(afterDelete, options)
+  const beforePosition = beforeLayout.nodes.find(node => node.id === 'wp:post:464')
+  const afterPosition = afterLayout.nodes.find(node => node.id === 'wp:post:464')
+  assert.deepEqual([afterPosition.x, afterPosition.y], [beforePosition.x, beforePosition.y])
 })
 
 test('post metadata and content edits resolve onto the same durable content noun', () => {
@@ -232,6 +322,25 @@ test('title and name changes use rename verbs without changing other updates', (
   assert.deepEqual(buildSiteTopology([declaration, renamed, updated]).nodes[0].changes.map(change => change.verb), ['Renamed', 'Updated'])
 })
 
+test('homogeneous change runs keep their verb while mixed runs stay generic', () => {
+  const renamed = buildSiteTopology([
+    event(1, 'wp.post.updated', { requestId: 'rename-a', objectType: 'post', objectId: 339, postType: 'page', title: 'Home A', changedProperties: ['title'], channel: 'wp-cli' }),
+    event(2, 'wp.post.updated', { requestId: 'rename-b', objectType: 'post', objectId: 339, postType: 'page', title: 'Home B', changedProperties: ['title'], channel: 'wp-cli' }),
+  ]).nodes[0]
+  const mixed = buildSiteTopology([
+    event(1, 'wp.post.updated', { requestId: 'rename', objectType: 'post', objectId: 339, postType: 'page', title: 'Home A', changedProperties: ['title'], channel: 'wp-cli' }),
+    event(2, 'wp.post.updated', { requestId: 'content', objectType: 'post', objectId: 339, postType: 'page', title: 'Home A', changedProperties: ['content'], channel: 'wp-cli' }),
+  ]).nodes[0]
+  const settings = buildSiteTopology([
+    event(1, 'wp.option.updated', { requestId: 'setting-a', objectType: 'option', name: 'blogdescription', channel: 'wp-cli' }),
+    event(2, 'wp.option.updated', { requestId: 'setting-b', objectType: 'option', name: 'blogdescription', channel: 'wp-cli' }),
+  ]).nodes[0]
+
+  assert.equal(topologyRunLabel(groupTopologyChanges(renamed.changes)[0]), 'renames')
+  assert.equal(topologyRunLabel(groupTopologyChanges(mixed.changes)[0]), 'updates')
+  assert.equal(topologyRunLabel(groupTopologyChanges(settings.changes)[0]), 'updates')
+})
+
 test('desktop site layout uses append-stable category lanes', () => {
   const events = []
   for (let index = 0; index < 20; index++) {
@@ -249,4 +358,46 @@ test('desktop site layout uses append-stable category lanes', () => {
   assert.equal(new Set(content.map(node => node.y)).size, 5)
   for (const node of first.nodes) assert.equal(`${node.x}:${node.y}`, finalPositions.get(node.id))
   assert.deepEqual(compact.lanes.map(lane => [lane.category, lane.compact]), [['content', true]])
+})
+
+test('v2 scale fixtures preserve nouns and coordinates while bounding overview edges', () => {
+  const session = event(1, 'session.start', { target: 'http://localhost:8081', topologyVersion: 2 }, 'session')
+  const placeEvents = Array.from({ length: 200 }, (_, index) => event(index + 2, 'wp.post.updated', {
+    requestId: `touch-${index + 1}`,
+    objectType: 'post',
+    objectId: index + 1,
+    postType: 'page',
+    title: `Scale page ${index + 1}`,
+    status: 'publish',
+    channel: 'wp-cli',
+  }))
+  const first = buildSiteTopology([session, ...placeEvents.slice(0, 150)])
+  const final = buildSiteTopology([session, ...placeEvents])
+  const options = { layoutSeed: { desktopWrapColumns: 4 } }
+  const firstLayout = layoutSiteTopology(first, options)
+  const finalLayout = layoutSiteTopology(final, options)
+  const finalPositions = new Map(finalLayout.nodes.map(node => [node.id, [node.x, node.y]]))
+
+  assert.equal(final.nodes.length, 200)
+  for (const node of firstLayout.nodes) assert.deepEqual(finalPositions.get(node.id), [node.x, node.y])
+  assert.equal(FULL_FIT_PLACE_LIMIT, 24)
+  const overviewEdges = visibleTopologyEdges(final.edges, final.nodes.length)
+  assert.equal(overviewEdges.length, OVERVIEW_IDLE_EDGE_LIMIT)
+  assert.ok(overviewEdges.some(edge => edge.current))
+
+  const edits = Array.from({ length: 300 }, (_, index) => event(index + 2, 'wp.post.updated', {
+    requestId: `edit-${index + 1}`,
+    objectType: 'post',
+    objectId: 464,
+    postType: 'page',
+    title: 'One intensely edited page',
+    status: 'draft',
+    changedProperties: ['content'],
+    channel: 'wp-cli',
+  }))
+  const edited = buildSiteTopology([session, ...edits])
+  assert.equal(edited.nodes.length, 1)
+  assert.equal(edited.nodes[0].history.length, 300)
+  assert.equal(groupTopologyChanges(edited.nodes[0].changes).length, 1)
+  assert.equal(groupTopologyChanges(edited.nodes[0].changes)[0].length, 300)
 })
