@@ -1,0 +1,493 @@
+{
+  "communities": {
+    "0": [
+      "knowledge_agenttrail_assessment_glob_matching",
+      "knowledge_agenttrail_assessment_hook_endpoint",
+      "knowledge_agenttrail_assessment_multi_repo_discovery",
+      "knowledge_agenttrail_assessment_observed_state_persistence",
+      "knowledge_agenttrail_assessment_plan_convention_api",
+      "upstream_agenttrail_bin_agenttrail",
+      "upstream_agenttrail_bin_agenttrail_argv",
+      "upstream_agenttrail_bin_agenttrail_atdir",
+      "upstream_agenttrail_bin_agenttrail_boards",
+      "upstream_agenttrail_bin_agenttrail_clients",
+      "upstream_agenttrail_bin_agenttrail_compmatchers",
+      "upstream_agenttrail_bin_agenttrail_component_matchers",
+      "upstream_agenttrail_bin_agenttrail_comprecent",
+      "upstream_agenttrail_bin_agenttrail_comptouched",
+      "upstream_agenttrail_bin_agenttrail_dirname",
+      "upstream_agenttrail_bin_agenttrail_discoverboards",
+      "upstream_agenttrail_bin_agenttrail_globtore",
+      "upstream_agenttrail_bin_agenttrail_handlehookevent",
+      "upstream_agenttrail_bin_agenttrail_idlist",
+      "upstream_agenttrail_bin_agenttrail_indexpath",
+      "upstream_agenttrail_bin_agenttrail_lasttreesent",
+      "upstream_agenttrail_bin_agenttrail_loadstate",
+      "upstream_agenttrail_bin_agenttrail_observed_state",
+      "upstream_agenttrail_bin_agenttrail_parsed",
+      "upstream_agenttrail_bin_agenttrail_parseplan",
+      "upstream_agenttrail_bin_agenttrail_planmtime",
+      "upstream_agenttrail_bin_agenttrail_planpath",
+      "upstream_agenttrail_bin_agenttrail_plantext",
+      "upstream_agenttrail_bin_agenttrail_rebuildmatchers",
+      "upstream_agenttrail_bin_agenttrail_recentactivity",
+      "upstream_agenttrail_bin_agenttrail_reltorepo",
+      "upstream_agenttrail_bin_agenttrail_repo",
+      "upstream_agenttrail_bin_agenttrail_runfor",
+      "upstream_agenttrail_bin_agenttrail_runs",
+      "upstream_agenttrail_bin_agenttrail_savestate",
+      "upstream_agenttrail_bin_agenttrail_server",
+      "upstream_agenttrail_bin_agenttrail_session",
+      "upstream_agenttrail_bin_agenttrail_statefile",
+      "upstream_agenttrail_bin_agenttrail_statmtime",
+      "upstream_agenttrail_bin_agenttrail_tooldetail",
+      "upstream_agenttrail_bin_agenttrail_touchcomponents",
+      "upstream_agenttrail_bin_agenttrail_tree"
+    ],
+    "1": [
+      "agents_zero_dependency",
+      "knowledge_agenttrail_assessment_graceful_degradation",
+      "knowledge_agenttrail_assessment_sse_message_shapes",
+      "knowledge_agenttrail_assessment_vanilla_ui",
+      "knowledge_agenttrail_assessment_zero_dependency_daemon",
+      "upstream_agenttrail_bin_agenttrail_broadcast",
+      "upstream_agenttrail_bin_agenttrail_broadcasttick",
+      "upstream_agenttrail_bin_agenttrail_buildtree",
+      "upstream_agenttrail_bin_agenttrail_hooktick",
+      "upstream_agenttrail_bin_agenttrail_http_server",
+      "upstream_agenttrail_bin_agenttrail_listenwithfallback",
+      "upstream_agenttrail_bin_agenttrail_live_run_state",
+      "upstream_agenttrail_bin_agenttrail_liveruns",
+      "upstream_agenttrail_bin_agenttrail_model",
+      "upstream_agenttrail_bin_agenttrail_onlisten",
+      "upstream_agenttrail_bin_agenttrail_relayhook",
+      "upstream_agenttrail_bin_agenttrail_send",
+      "upstream_agenttrail_bin_agenttrail_sse_stream",
+      "upstream_agenttrail_bin_agenttrail_throttlebroadcast",
+      "upstream_agenttrail_package_zero_dependencies",
+      "upstream_agenttrail_plan_explorer_tree",
+      "upstream_agenttrail_public_index_eventsource",
+      "upstream_agenttrail_public_index_isfolderopen",
+      "upstream_agenttrail_public_index_model_state",
+      "upstream_agenttrail_public_index_partial_tick_handler",
+      "upstream_agenttrail_public_index_render",
+      "upstream_agenttrail_public_index_renderboards",
+      "upstream_agenttrail_public_index_rendertree",
+      "upstream_agenttrail_readme_repo_tree"
+    ],
+    "2": [
+      "docs_trail_format_append_only_event_log",
+      "docs_trail_format_append_only_rule",
+      "docs_trail_format_data_field",
+      "docs_trail_format_envelope",
+      "docs_trail_format_kind_field",
+      "docs_trail_format_no_secrets",
+      "docs_trail_format_project_target_storage",
+      "docs_trail_format_rolling_cache",
+      "docs_trail_format_session_discovery",
+      "docs_trail_format_site_target_storage",
+      "docs_trail_format_source_field",
+      "docs_trail_format_streamable_rule",
+      "docs_trail_format_tolerant_readers",
+      "docs_trail_format_trail",
+      "knowledge_agenttrail_assessment_split_html",
+      "knowledge_decisions_product_owned_jsonl",
+      "knowledge_decisions_timelapse_audit_faithful",
+      "knowledge_decisions_trail_core",
+      "product_live_board",
+      "product_principle_record_once",
+      "product_record_once_render_many",
+      "product_replay",
+      "product_success_timelapses",
+      "product_timelapse",
+      "product_trail",
+      "readme_replay",
+      "readme_timelapse",
+      "readme_trail"
+    ],
+    "3": [
+      "knowledge_agenttrail_assessment_typed_wp_components",
+      "plan_board",
+      "plan_board_live",
+      "plan_decision_trail_product_owned",
+      "plan_observe_repo",
+      "plan_observe_repo_adapt",
+      "plan_observe_repo_wpmap",
+      "plan_observe_site",
+      "plan_observe_site_muplugin",
+      "plan_observe_site_presence",
+      "plan_observe_site_sidecar",
+      "plan_replay",
+      "plan_replay_scrub",
+      "plan_ship",
+      "plan_ship_npx",
+      "plan_timelapse",
+      "plan_timelapse_render",
+      "plan_trail",
+      "plan_trail_read",
+      "plan_trail_write",
+      "product_phase_1_repo_map"
+    ],
+    "4": [
+      "docs_observation_surfaces_admin_ui",
+      "docs_observation_surfaces_audit_mu_plugin",
+      "docs_observation_surfaces_channel_tags",
+      "docs_observation_surfaces_client_side_tap",
+      "docs_observation_surfaces_declared_observed_correlation",
+      "docs_observation_surfaces_escalating_fidelity",
+      "docs_observation_surfaces_hook_layer",
+      "docs_observation_surfaces_liveness_presence",
+      "docs_observation_surfaces_mcp_abilities_api",
+      "docs_observation_surfaces_plugin_adapters",
+      "docs_observation_surfaces_rest_api",
+      "docs_observation_surfaces_runtime_drift",
+      "docs_observation_surfaces_wp_cli_ssh",
+      "knowledge_decisions_agent_plugin_agnostic",
+      "knowledge_decisions_presence_first_class",
+      "knowledge_decisions_wp_hook_layer",
+      "product_adapters",
+      "product_altis_accelerate",
+      "product_phase_2_runtime_signals",
+      "product_phase_3_site_agent_observability"
+    ],
+    "5": [
+      "upstream_agenttrail_plan_explorer",
+      "upstream_agenttrail_plan_map",
+      "upstream_agenttrail_plan_map_capsules",
+      "upstream_agenttrail_plan_map_graph",
+      "upstream_agenttrail_plan_map_logo",
+      "upstream_agenttrail_plan_map_naming",
+      "upstream_agenttrail_plan_plan_parse",
+      "upstream_agenttrail_plan_plan_reader",
+      "upstream_agenttrail_plan_plan_watch",
+      "upstream_agenttrail_plan_ship",
+      "upstream_agenttrail_plan_ship_discovery",
+      "upstream_agenttrail_plan_ship_empty",
+      "upstream_agenttrail_plan_ship_npm",
+      "upstream_agenttrail_plan_ship_portable",
+      "upstream_agenttrail_plan_ship_readme",
+      "upstream_agenttrail_plan_ship_trust",
+      "upstream_agenttrail_plan_watch_files",
+      "upstream_agenttrail_plan_watch_filter",
+      "upstream_agenttrail_plan_watcher",
+      "upstream_agenttrail_readme_plan_convention"
+    ],
+    "6": [
+      "agents_decision_log",
+      "agents_owner_readable_naming",
+      "agents_product_principles",
+      "knowledge_agenttrail_assessment_adapt_not_rewrite",
+      "knowledge_decisions_adapt_agenttrail",
+      "knowledge_decisions_free_mit",
+      "product_aphelion",
+      "product_non_goals",
+      "product_principle_free_open",
+      "product_principle_local_by_construction",
+      "product_principle_observe_never_control",
+      "product_principle_owner_readable",
+      "product_principle_wp_native_agent_agnostic",
+      "product_principle_zero_ceremony",
+      "readme_live_observability",
+      "upstream_agenttrail_readme_local_construction",
+      "upstream_agenttrail_readme_no_control"
+    ],
+    "7": [
+      "upstream_agenttrail_package",
+      "upstream_agenttrail_package_bin",
+      "upstream_agenttrail_package_bin_agenttrail",
+      "upstream_agenttrail_package_description",
+      "upstream_agenttrail_package_engines",
+      "upstream_agenttrail_package_engines_node",
+      "upstream_agenttrail_package_files",
+      "upstream_agenttrail_package_homepage",
+      "upstream_agenttrail_package_keywords",
+      "upstream_agenttrail_package_license",
+      "upstream_agenttrail_package_name",
+      "upstream_agenttrail_package_repository",
+      "upstream_agenttrail_package_repository_type",
+      "upstream_agenttrail_package_repository_url",
+      "upstream_agenttrail_package_type",
+      "upstream_agenttrail_package_version"
+    ],
+    "8": [
+      "upstream_agenttrail_plan_runs_ui",
+      "upstream_agenttrail_public_index_agentcolor",
+      "upstream_agenttrail_public_index_agenticon",
+      "upstream_agenttrail_public_index_collapsedgraphnode",
+      "upstream_agenttrail_public_index_esc",
+      "upstream_agenttrail_public_index_expandedgraphnode",
+      "upstream_agenttrail_public_index_graphnode",
+      "upstream_agenttrail_public_index_graphsessionrow",
+      "upstream_agenttrail_public_index_graphtaskdetails",
+      "upstream_agenttrail_public_index_graphtaskmarker",
+      "upstream_agenttrail_public_index_graphtaskrow",
+      "upstream_agenttrail_public_index_kids",
+      "upstream_agenttrail_public_index_nodeagentchips",
+      "upstream_agenttrail_public_index_nodestatusicon",
+      "upstream_agenttrail_public_index_renderruns",
+      "upstream_agenttrail_readme_run_cards"
+    ],
+    "9": [
+      "agents_attribution",
+      "agents_upstream_snapshot",
+      "docs_trail_format_declared_observed_events",
+      "knowledge_agenttrail_assessment_mit_provenance",
+      "product_declared_vs_observed",
+      "product_principle_declared_observed",
+      "readme_agenttrail_adaptation",
+      "upstream_agenttrail_package_agenttrail",
+      "upstream_agenttrail_package_npm_bin",
+      "upstream_agenttrail_readme_agenttrail",
+      "upstream_agenttrail_readme_declared",
+      "upstream_agenttrail_readme_observed",
+      "upstream_agenttrail_readme_supported_agents"
+    ],
+    "10": [
+      "upstream_agenttrail_public_index_graphdetailheight",
+      "upstream_agenttrail_public_index_graphedge",
+      "upstream_agenttrail_public_index_graphlinkedge",
+      "upstream_agenttrail_public_index_graphnodemetrics",
+      "upstream_agenttrail_public_index_graphtaskisopen",
+      "upstream_agenttrail_public_index_isskeletonplan",
+      "upstream_agenttrail_public_index_renderbadge",
+      "upstream_agenttrail_public_index_rendergraph",
+      "upstream_agenttrail_public_index_renderobserved",
+      "upstream_agenttrail_public_index_rendertimes",
+      "upstream_agenttrail_public_index_renderzero",
+      "upstream_agenttrail_public_index_togglegraphnode",
+      "upstream_agenttrail_public_index_togglegraphtask"
+    ],
+    "11": [
+      "knowledge_agenttrail_assessment_backfill_prompt",
+      "knowledge_agenttrail_assessment_idempotent_hook_install",
+      "upstream_agenttrail_bin_agenttrail_init",
+      "upstream_agenttrail_bin_agenttrail_installhooks",
+      "upstream_agenttrail_bin_agenttrail_saferead",
+      "upstream_agenttrail_plan_runs",
+      "upstream_agenttrail_plan_runs_endpoint",
+      "upstream_agenttrail_plan_runs_pin",
+      "upstream_agenttrail_plan_runs_relay"
+    ],
+    "12": [
+      "upstream_agenttrail_public_index_fitgraph",
+      "upstream_agenttrail_public_index_ongraphwheel",
+      "upstream_agenttrail_public_index_updatetransform",
+      "upstream_agenttrail_public_index_zoomby"
+    ],
+    "13": [
+      "agents_source_of_truth",
+      "claude_single_source_of_truth"
+    ],
+    "14": [
+      "upstream_agenttrail_public_index_copy",
+      "upstream_agenttrail_public_index_copybackfill"
+    ],
+    "15": [
+      "readme_aphelion"
+    ],
+    "16": [
+      "readme_pre_alpha"
+    ],
+    "17": [
+      "upstream_agenttrail_package_node20"
+    ],
+    "18": [
+      "upstream_agenttrail_public_index_agentglyph"
+    ],
+    "19": [
+      "upstream_agenttrail_public_index_ago"
+    ],
+    "20": [
+      "upstream_agenttrail_public_index_endpan"
+    ],
+    "21": [
+      "upstream_agenttrail_public_index_getdepth"
+    ],
+    "22": [
+      "upstream_agenttrail_public_index_graph_state"
+    ],
+    "23": [
+      "upstream_agenttrail_public_index_movepan"
+    ],
+    "24": [
+      "upstream_agenttrail_public_index_renderconnectionerror"
+    ],
+    "25": [
+      "upstream_agenttrail_public_index_startpan"
+    ]
+  },
+  "cohesion": {
+    "0": 0.06155632984901278,
+    "1": 0.09852216748768473,
+    "2": 0.09259259259259259,
+    "3": 0.10476190476190476,
+    "4": 0.1368421052631579,
+    "5": 0.1,
+    "6": 0.11764705882352941,
+    "7": 0.125,
+    "8": 0.175,
+    "9": 0.16666666666666666,
+    "10": 0.16666666666666666,
+    "11": 0.25,
+    "12": 0.6666666666666666,
+    "13": 1.0,
+    "14": 1.0,
+    "15": 1.0,
+    "16": 1.0,
+    "17": 1.0,
+    "18": 1.0,
+    "19": 1.0,
+    "20": 1.0,
+    "21": 1.0,
+    "22": 1.0,
+    "23": 1.0,
+    "24": 1.0,
+    "25": 1.0
+  },
+  "gods": [
+    {
+      "id": "product_aphelion",
+      "label": "aphelion flight recorder and live map",
+      "degree": 14
+    },
+    {
+      "id": "docs_trail_format_trail",
+      "label": "Trail format v0",
+      "degree": 12
+    },
+    {
+      "id": "upstream_agenttrail_public_index_rendergraph",
+      "label": "renderGraph",
+      "degree": 12
+    },
+    {
+      "id": "upstream_agenttrail_public_index_render",
+      "label": "render",
+      "degree": 11
+    },
+    {
+      "id": "upstream_agenttrail_bin_agenttrail_handlehookevent",
+      "label": "handleHookEvent",
+      "degree": 9
+    },
+    {
+      "id": "upstream_agenttrail_readme_agenttrail",
+      "label": "agenttrail local observability layer",
+      "degree": 9
+    },
+    {
+      "id": "upstream_agenttrail_bin_agenttrail_model",
+      "label": "model",
+      "degree": 8
+    },
+    {
+      "id": "upstream_agenttrail_bin_agenttrail_broadcasttick",
+      "label": "broadcastTick",
+      "degree": 8
+    },
+    {
+      "id": "product_trail",
+      "label": "The trail",
+      "degree": 8
+    },
+    {
+      "id": "upstream_agenttrail_plan_ship",
+      "label": "Ship to GitHub and npm",
+      "degree": 8
+    }
+  ],
+  "surprises": [
+    {
+      "source": "listenWithFallback",
+      "target": "Graceful degradation",
+      "source_files": [
+        "upstream/agenttrail/bin/agenttrail.mjs",
+        "knowledge/agenttrail-assessment.md"
+      ],
+      "confidence": "INFERRED",
+      "relation": "conceptually_related_to",
+      "why": "inferred connection - not explicitly stated in source; crosses file types (code ↔ doc); connects across different repos/directories; peripheral node `Graceful degradation` unexpectedly reaches hub `listenWithFallback`"
+    },
+    {
+      "source": "PLAN.md convention as API",
+      "target": "parsePlan",
+      "source_files": [
+        "knowledge/agenttrail-assessment.md",
+        "upstream/agenttrail/bin/agenttrail.mjs"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "references",
+      "why": "crosses file types (code ↔ doc); connects across different repos/directories; peripheral node `PLAN.md convention as API` unexpectedly reaches hub `parsePlan`"
+    },
+    {
+      "source": "parsePlan",
+      "target": "Read the plan into a live model",
+      "source_files": [
+        "upstream/agenttrail/bin/agenttrail.mjs",
+        "upstream/agenttrail/PLAN.md"
+      ],
+      "confidence": "INFERRED",
+      "relation": "implements",
+      "why": "inferred connection - not explicitly stated in source; crosses file types (code ↔ doc); bridges separate communities; peripheral node `Read the plan into a live model` unexpectedly reaches hub `parsePlan`"
+    },
+    {
+      "source": "Arbitrary POST /hook extension point",
+      "target": "handleHookEvent",
+      "source_files": [
+        "knowledge/agenttrail-assessment.md",
+        "upstream/agenttrail/bin/agenttrail.mjs"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "references",
+      "why": "crosses file types (code ↔ doc); connects across different repos/directories; peripheral node `Arbitrary POST /hook extension point` unexpectedly reaches hub `handleHookEvent`"
+    },
+    {
+      "source": "handleHookEvent",
+      "target": "Receive hook events and track sessions",
+      "source_files": [
+        "upstream/agenttrail/bin/agenttrail.mjs",
+        "upstream/agenttrail/PLAN.md"
+      ],
+      "confidence": "INFERRED",
+      "relation": "implements",
+      "why": "inferred connection - not explicitly stated in source; crosses file types (code ↔ doc); bridges separate communities; peripheral node `Receive hook events and track sessions` unexpectedly reaches hub `handleHookEvent`"
+    }
+  ],
+  "questions": [
+    {
+      "type": "bridge_node",
+      "question": "Why does `renderGraph` connect `Community 10` to `Community 8`, `Community 1`, `Community 2`, `Community 5`?",
+      "why": "High betweenness centrality (0.304) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `aphelion flight recorder and live map` connect `Community 6` to `Community 9`, `Community 2`, `Community 3`, `Community 4`?",
+      "why": "High betweenness centrality (0.296) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `render` connect `Community 1` to `Community 8`, `Community 10`?",
+      "why": "High betweenness centrality (0.248) - this node is a cross-community bridge."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 3 inferred relationships involving `renderGraph` (e.g. with `Live board projection` and `Record once, render many`) actually correct?",
+      "why": "`renderGraph` has 3 INFERRED edges - model-reasoned connections that need verification."
+    },
+    {
+      "type": "isolated_nodes",
+      "question": "What connects `__dirname`, `argv`, `repo` to the rest of the system?",
+      "why": "129 weakly-connected nodes found - possible documentation gaps or missing edges."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `Community 0` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.06155632984901278 - nodes in this community are weakly interconnected."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `Community 1` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.09852216748768473 - nodes in this community are weakly interconnected."
+    }
+  ]
+}
