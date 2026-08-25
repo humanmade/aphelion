@@ -1,6 +1,6 @@
-import { createProjection, projectEvents, reduceEvent, summarizeEvent } from '/assets/reducer.mjs'
+import { createProjection, reduceEvent, summarizeEvent } from '/assets/reducer.mjs'
 import { buildReplayIndex, projectReplay } from '/assets/replay.mjs'
-import { buildSiteTopology, layoutSiteTopology } from '/assets/topology.mjs'
+import { buildSiteTopology, displayChannel, layoutSiteTopology } from '/assets/topology.mjs'
 
 // Graph layout and expandable node interaction substantially adapt sodiumsun/agenttrail (MIT, snapshot 41454d4).
 
@@ -12,7 +12,6 @@ const state = {
   liveEvents: [],
   replayEvents: [],
   replayIndex: null,
-  replayFinalModel: null,
   sessions: [],
   sessionId: null,
   cursor: 0,
@@ -94,6 +93,14 @@ function visibleTrailEvents() {
   return state.replayEvents.slice(0, Math.max(0, state.cursor + 1))
 }
 
+function currentTopology(model) {
+  const trailEvents = visibleTrailEvents()
+  const blueprintEvents = state.mode === 'live' ? trailEvents : state.replayEvents
+  const target = model.session?.target || model.daemon?.target || 'Local WordPress site'
+  const siteName = model.session?.siteName || model.session?.targetName || model.session?.siteTitle || null
+  return buildSiteTopology(trailEvents, { blueprintEvents, target, siteName })
+}
+
 function currentProjection() {
   if (state.mode === 'live') return state.liveModel
   if (!state.replayIndex || state.replayIndex.length !== state.replayEvents.length || state.replayIndex.lastSeq !== state.replayEvents.at(-1)?.seq) state.replayIndex = buildReplayIndex(state.replayEvents)
@@ -123,7 +130,7 @@ function toast(message) {
 
 function renderHeader(model) {
   const target = model.session?.target || model.daemon?.target || 'Local WordPress project'
-  const targetName = target.includes('://') ? new URL(target).hostname : target.split(/[\\/]/).filter(Boolean).at(-1) || target
+  const targetName = target.includes('://') ? new URL(target).host : target.split(/[\\/]/).filter(Boolean).at(-1) || target
   setText('target-name', targetName)
   setText('target-path', target)
   const signal = $('live-signal')
@@ -172,7 +179,31 @@ function renderOrbit(model) {
   setText('event-position', `${events.length ? cursor + 1 : 0} / ${events.length} events`)
 }
 
-function renderBrief(model) {
+function renderBrief(model, topology) {
+  const focus = topology?.focus
+  if (focus?.place && focus?.change && focus?.edge) {
+    const actorName = focus.edge.actor || focus.change.actor
+    const subject = actorName || 'Unattributed work'
+    setText('brief-title', `${subject} via ${displayChannel(focus.edge.channel)} is changing ${focus.place.title}`)
+    setText('brief-detail', focus.change.confirmation
+      ? `Confirmed by WordPress: ${focus.change.confirmation.summary}${focus.change.claim ? ` · Claim: ${focus.change.claim.summary}` : ' · No matching claim was recorded.'}`
+      : `Claimed: ${focus.change.claim?.summary || focus.change.verb}. Waiting for independent WordPress confirmation.`)
+    setText('declared-count', String(model.counts?.declared || 0))
+    setText('observed-count', String(model.counts?.observed || 0))
+    setText('connection-count', String(activeConnections(model).length))
+    return
+  }
+  const latestChange = topology?.changes?.at(-1)
+  if (latestChange) {
+    setText('brief-title', `${latestChange.verb} ${latestChange.placeTitle}`)
+    setText('brief-detail', latestChange.confirmation
+      ? `${displayChannel(latestChange.channel)} delivered a WordPress-confirmed change. Open the place history to compare its claim and confirmation.`
+      : `${displayChannel(latestChange.channel)} recorded a claim without a WordPress confirmation.`)
+    setText('declared-count', String(model.counts?.declared || 0))
+    setText('observed-count', String(model.counts?.observed || 0))
+    setText('connection-count', String(activeConnections(model).length))
+    return
+  }
   const latest = model.recent?.find(event => !event.kind.startsWith('presence.') || /(?:error|timeout|disconnect)$/.test(event.kind))
   setText('brief-title', latest?.summary || (model.status === 'ended' ? 'This recorded path is ready to replay' : 'Waiting for the first recorded action'))
   const detail = latest
@@ -190,37 +221,41 @@ function renderBrief(model) {
   setText('connection-count', String(activeConnections(model).length))
 }
 
-function renderComponents(model) {
-  const components = (model.plan?.nodes || []).filter(item => item.level === 'component')
+function renderComponents(model, topology = currentTopology(model)) {
+  const plannedComponents = (model.plan?.nodes || []).filter(item => item.level === 'component')
   const declarations = model.repository?.declarations || []
-  const visibleJourneys = Object.values(model.journeys || {}).filter(item => item.declaredAt !== null && item.phases.length > 0).sort((a, b) => a.startedAt - b.startedAt)
-  const blueprintModel = state.mode === 'live' ? model : state.replayFinalModel || projectEvents(state.replayEvents)
-  const blueprintJourneys = Object.values(blueprintModel.journeys || {}).filter(item => item.declaredAt !== null && item.phases.length > 0).sort((a, b) => a.startedAt - b.startedAt)
-  const latestJourney = visibleJourneys.at(-1)
+  // WordPress actions are the work in a site session. PLAN.md remains trail
+  // evidence, but it must never displace the durable site map from top-left.
+  const components = topology.nodes.length ? [] : plannedComponents
+  const visibleEntities = topology.nodes.filter(item => !item.future)
+  const entitySummary = topology.nodes.length ? `${visibleEntities.length}/${topology.nodes.length} ${topology.nodes.length === 1 ? 'place' : 'places'} · ${topology.changes.length} ${topology.changes.length === 1 ? 'change' : 'changes'}` : ''
   const completed = components.filter(item => item.status === 'done').length
-  const journeySummary = latestJourney ? `${visibleJourneys.length}/${blueprintJourneys.length} paths revealed · ${latestJourney.status === 'observed' ? `latest effect in ${duration(latestJourney.effectLatencyMs)}` : 'latest path in flight'}` : blueprintJourneys.length ? `0/${blueprintJourneys.length} paths revealed` : ''
-  const planSummary = components.length ? `${completed}/${components.length} components` : declarations.length ? `${declarations.length} WordPress declarations` : ''
-  setText('map-summary', [journeySummary, planSummary].filter(Boolean).join(' · '))
+  const planSummary = components.length ? `${completed}/${components.length} components` : ''
+  setText('map-summary', [entitySummary, planSummary].filter(Boolean).join(' · '))
   const flow = $('component-flow')
   flow.style.removeProperty('height')
+  flow.style.removeProperty('--expanded-height')
+  flow.dataset.expanded = String(state.openGraphNodes.size > 0)
+  document.querySelector('.app-shell').dataset.graphExpanded = String(state.openGraphNodes.size > 0)
   const compact = window.innerWidth <= 680
   const graphNodes = []
   const graphEdges = []
   const scalar = value => Array.isArray(value) ? value.join(' · ') : value && typeof value === 'object' ? JSON.stringify(value) : String(value ?? '')
   const label = value => String(value).replace(/([a-z])([A-Z])/g, '$1 $2').replaceAll('_', ' ').replace(/^./, character => character.toUpperCase())
-  const eventProperties = phase => {
-    const event = currentEvents().find(candidate => candidate.seq === phase.seq)
-    if (!event) return []
-    const preferred = ['ability', 'objectType', 'objectId', 'postType', 'title', 'name', 'metaKey', 'plugin', 'blocks', 'blockCount', 'outcome', 'actor', 'channel', 'transport', 'connectionId', 'requestId']
-    const data = event.data || {}
-    const keys = [...preferred.filter(key => data[key] !== undefined), ...Object.keys(data).filter(key => key !== 'summary' && !preferred.includes(key))]
-    return [
-      { label: 'Event', value: event.kind },
-      { label: 'Source', value: event.source },
-      ...keys.slice(0, 12).map(key => ({ label: label(key), value: scalar(data[key]) })),
-      { label: 'Trail sequence', value: `#${event.seq}` },
-    ].filter(row => row.value !== '')
-  }
+  const changeProperties = change => [
+    { label: 'Claim', value: change.claim?.summary || 'No declared claim recorded' },
+    { label: 'Confirmation', value: change.confirmation?.summary || 'No WordPress confirmation recorded' },
+  ].filter(Boolean)
+  const changeRow = change => ({
+    title: change.verb,
+    status: change.status === 'confirmed' ? 'done' : change.status === 'in-flight' ? 'active' : 'blocked',
+    meta: `${formatClock(change.ts)} · ${displayChannel(change.channel)} · ${change.status}`,
+    properties: changeProperties(change),
+    seq: change.seq,
+  })
+  const lastChangeLine = change => change
+    ? `${change.verb} · ${change.status === 'in-flight' ? 'claimed via' : 'via'} ${displayChannel(change.channel)} · ${formatClock(change.ts)}`
+    : 'No changes recorded'
   const taskRows = component => model.plan.nodes.filter(candidate => candidate.parent === component.id).map(task => ({
     title: task.title,
     status: task.status,
@@ -247,7 +282,7 @@ function renderComponents(model) {
     components.forEach(getDepth)
     for (const component of components) {
       const rows = taskRows(component), done = rows.filter(row => row.status === 'done').length
-      graphNodes.push({ id: component.id, depth: getDepth(component), kind: 'component', kicker: component.tech || `#${component.id}`, title: component.title, meta: `${done} of ${rows.length} tasks · ${component.status}`, status: component.status, progress: rows.length ? done / rows.length : 0, rows })
+      graphNodes.push({ id: component.id, depth: getDepth(component), group: 'plan', kind: 'component', kicker: component.tech || `Component · ${component.id}`, title: component.title, meta: `${done} of ${rows.length} tasks · ${component.status}`, status: component.status, progress: rows.length ? done / rows.length : 0, rows })
     }
     for (const component of components) for (const need of component.needs || []) if (byId[need]) graphEdges.push({ from: need, to: component.id, kind: 'dependency' })
     const links = new Set()
@@ -257,72 +292,93 @@ function renderComponents(model) {
     }
   }
 
-  for (const blueprintJourney of blueprintJourneys) {
-    const visibleJourney = visibleJourneys.find(item => item.id === blueprintJourney.id)
-    const visiblePhases = visibleJourney?.phases || []
-    const visibleBySeq = new Map(visiblePhases.map(phase => [phase.seq, phase]))
-    const phases = blueprintJourney.phases.slice(-6)
-    phases.forEach((blueprintPhase, index) => {
-      const previous = phases[index - 1]
-      const phase = visibleBySeq.get(blueprintPhase.seq) || blueprintPhase
-      const visible = visibleBySeq.has(blueprintPhase.seq)
-      const previousVisible = previous ? visibleBySeq.has(previous.seq) : false
-      const gap = previous ? Math.max(0, phase.ts - previous.ts) : 0
-      const lastVisible = visible && phase.seq === visiblePhases.at(-1)?.seq
-      const id = `journey-${blueprintJourney.id}-${phase.seq}`
-      const status = !visible ? 'pending' : phase.class === 'observed' || !lastVisible || visibleJourney.status === 'observed' ? 'done' : visibleJourney.status === 'error' ? 'blocked' : 'active'
+  if (topology.nodes.length) {
+    graphNodes.push({
+      id: topology.root.id,
+      group: 'site',
+      kind: 'site',
+      kicker: `Site · ${topology.root.identity}`,
+      title: topology.root.title,
+      stateLine: topology.root.stateLine,
+      lastChangeLine: lastChangeLine(topology.root.lastChange),
+      historyLabel: `${topology.root.changes.length} ${topology.root.changes.length === 1 ? 'change' : 'changes'} · open history`,
+      status: topology.root.active ? 'active' : 'done',
+      flowState: topology.root.flowState,
+      progress: 1,
+      rows: [...topology.root.changes].reverse().map(changeRow),
+      topologyRoot: true,
+    })
+
+    for (const entity of topology.nodes) {
+      const typeLabel = entity.type === 'option' ? 'Setting' : entity.type === 'content' ? 'Content' : label(entity.type)
+      const status = entity.future ? 'pending' : entity.active ? 'active' : entity.observedCount ? 'done' : 'pending'
+      const historyRows = [...entity.changes].reverse().map(changeRow)
       graphNodes.push({
-        id, depth: index, group: 'journey', kind: phase.class, future: !visible,
-        kicker: phase.class === 'declared' ? 'DECLARED INTENT' : phase.class === 'observed' ? 'OBSERVED EFFECT' : phase.class === 'presence' ? 'CONNECTION' : phase.kind,
-        title: phase.summary,
-        meta: `${phase.channel || phase.source} · ${phase.transport || phase.class}${previous ? ` · +${duration(gap)}` : ''}`,
-        status, progress: status === 'done' ? 1 : .45, seq: phase.seq,
-        rows: [{ title: 'Recorded properties', status, meta: `${eventProperties(phase).length} fields`, properties: eventProperties(phase) }],
+        id: entity.id,
+        group: 'site',
+        kind: 'entity',
+        entityType: entity.type,
+        future: entity.future,
+        kicker: `${typeLabel} · ${entity.identity}`,
+        title: entity.title,
+        stateLine: entity.future ? 'Not reached yet' : entity.stateLine,
+        lastChangeLine: entity.future ? 'No changes recorded' : lastChangeLine(entity.lastChange),
+        historyLabel: `${entity.changes.length} ${entity.changes.length === 1 ? 'change' : 'changes'} · open history`,
+        status,
+        flowState: entity.flowState,
+        progress: status === 'done' ? 1 : status === 'active' ? .5 : 0,
+        seq: entity.lastSeq,
+        rows: historyRows,
+        current: entity.current,
+        topologyOrder: entity.order,
       })
-      if (previous) graphEdges.push({
-        from: `journey-${blueprintJourney.id}-${previous.seq}`,
-        to: id,
-        kind: 'journey',
-        future: !visible || !previousVisible,
-        active: visible && previousVisible && lastVisible && visibleJourney.status === 'active',
-        duration: Math.max(650, Math.min(4000, gap || 1200)),
-      })
+    }
+
+    const futureIds = new Set(topology.nodes.filter(entity => entity.future).map(entity => entity.id))
+    for (const edge of topology.edges) graphEdges.push({
+      id: edge.id,
+      from: edge.from,
+      to: edge.to,
+      kind: 'channel',
+      label: displayChannel(edge.channel),
+      claim: topology.focus?.edge.id === edge.id && !topology.focus.change.confirmation ? topology.focus.change.claim?.summary : null,
+      active: edge.active,
+      flowState: edge.flowState,
+      current: edge.current,
+      future: edge.future || (futureIds.has(edge.to) && edge.flowState === 'idle'),
+      duration: edge.durationMs,
     })
   }
 
   if (!graphNodes.length && declarations.length) declarations.slice(0, 8).forEach((declaration, index) => graphNodes.push({
-    id: `declaration-${index}`, depth: index, kind: 'declaration', kicker: 'WORDPRESS DECLARATION', title: declaration.title || declaration.name,
+    id: `declaration-${index}`, depth: index, group: 'plan', kind: 'declaration', kicker: `WordPress · ${declaration.type.replaceAll('-', ' ')}`, title: declaration.title || declaration.name,
     meta: declaration.type.replaceAll('-', ' '), status: 'pending', progress: 0,
     rows: [{ title: declaration.name || declaration.title, status: 'pending', meta: declaration.type, properties: Object.entries(declaration).filter(([key]) => !['title', 'name', 'type'].includes(key)).map(([key, value]) => ({ label: label(key), value: scalar(value) })) }],
   }))
 
   if (!graphNodes.length) {
     const empty = node('div', 'empty-ledger')
-    empty.append(node('strong', '', 'The topology will assemble from the trail.'), node('span', '', 'PLAN.md supplies dependency edges; correlated WordPress phases draw their own observed path.'))
+    empty.append(node('strong', '', 'The site map will grow from the first durable object.'), node('span', '', 'Actions resolve onto WordPress content, settings, plugins, and abilities. Connection lifecycle stays on the edges.'))
     flow.replaceChildren(empty)
     return
   }
 
-  // AgentTrail's graph keeps a deliberately roomy node, then fits the whole
-  // world into the canvas. Keep that contract, but make the node legible in
-  // Aphelion's narrower three-column board instead of scaling a 400px card
-  // down to illegible type when a timed journey has three phases.
+  // AgentTrail assigns durable components a stable position and updates their
+  // activity in place. Site entities keep that same spatial contract.
   const flowWidth = Math.max(320, flow.clientWidth || (compact ? 358 : 760))
-  const nodeW = compact ? Math.min(320, Math.max(270, flowWidth - 48)) : Math.min(300, Math.max(250, Math.round(flowWidth * .34)))
-  const nodeH = compact ? 122 : 118
-  const gapX = compact ? 34 : 68
-  const gapY = compact ? 28 : 34
-  // Leave a clear top lane for the canvas controls. The x/y insets are
-  // intentionally independent: a compact mobile graph needs more breathing
-  // room above its first node without shrinking the cards horizontally.
-  const padX = compact ? 24 : 36
-  const padY = compact ? 144 : 88
-  const detailHeight = item => Math.max(64, 16 + item.rows.reduce((height, row) => height + 48 + row.properties.length * 22, 0))
+  const nodeW = compact ? Math.min(320, Math.max(280, flowWidth - 48)) : state.focused ? 360 : Math.min(340, Math.max(280, Math.round(flowWidth * .46)))
+  const nodeH = 176
+  const gapX = compact ? 38 : 112
+  const gapY = compact ? 28 : 40
+  const padX = compact ? 24 : 52
+  const padY = compact ? 132 : 80
+  const detailHeight = item => Math.min(680, Math.max(84, 16 + item.rows.reduce((height, row) => height + 48 + Math.min(12, row.properties.length) * 22, 0)))
   const metrics = Object.fromEntries(graphNodes.map(item => {
     const open = state.openGraphNodes.has(item.id), detailH = open ? detailHeight(item) : 0
     return [item.id, { w: nodeW, nodeW, nodeH, detailH, h: nodeH + (open ? 24 + detailH : 0) }]
   }))
-  const primary = graphNodes.filter(item => item.group !== 'journey'), journeys = graphNodes.filter(item => item.group === 'journey')
+  const planNodes = graphNodes.filter(item => item.group === 'plan')
+  const siteNodes = graphNodes.filter(item => item.group === 'site')
   const layoutGroup = (items, offsetY = padY) => {
     if (!items.length) return { bottom: offsetY, right: padX }
     if (compact) {
@@ -341,26 +397,36 @@ function renderComponents(model) {
     }
     return { bottom, right }
   }
-  const firstLayout = layoutGroup(primary)
-  const secondLayout = layoutGroup(journeys, primary.length ? firstLayout.bottom + 44 : padY)
-  const graphBottom = Math.max(firstLayout.bottom, secondLayout.bottom)
-  const graphRight = Math.max(firstLayout.right, secondLayout.right)
-  // The previous fixed-height viewport let SVG preserveAspectRatio letterbox
-  // a wide path vertically. Size the board from the same world bounds used by
-  // Fit so the recorded path occupies the instrument instead of floating in
-  // an empty field. The inline height remains bounded for large plans.
+  const planLayout = layoutGroup(planNodes)
+  if (siteNodes.length) {
+    const siteOffsetY = planNodes.length ? planLayout.bottom + 72 : padY
+    const siteLayout = layoutSiteTopology(topology, { compact, nodeW, nodeH, gapX, gapY, padX, padY: siteOffsetY })
+    const positions = new Map(siteLayout.nodes.map(item => [item.id, item]))
+    const columnShift = new Map()
+    for (const item of siteNodes) {
+      const position = positions.get(item.id)
+      if (!position) continue
+      const shift = columnShift.get(position.depth) || 0
+      Object.assign(item, { x: position.x, y: position.y + shift, depth: position.depth })
+      if (state.openGraphNodes.has(item.id)) columnShift.set(position.depth, shift + metrics[item.id].detailH + 24)
+    }
+  }
+  const graphBottom = Math.max(padY, ...graphNodes.map(item => item.y + metrics[item.id].h + padY))
+  const graphRight = Math.max(padX, ...graphNodes.map(item => item.x + nodeW + padX))
   const fitScale = Math.min(1, flowWidth / graphRight)
   const desiredHeight = graphBottom * fitScale + 48
   const minHeight = compact ? 520 : 360
   // Expanded AgentTrail-style detail cards are part of the work surface, not
   // a tooltip. Give them room to grow before SVG has to scale the type down;
   // collapsed maps retain the compact first-viewport bounds.
-  const maxHeight = state.openGraphNodes.size ? (compact ? 1400 : 1000) : (compact ? 720 : 620)
-  flow.style.height = `${Math.round(Math.max(minHeight, Math.min(maxHeight, desiredHeight)))}px`
+  const maxHeight = state.openGraphNodes.size ? (compact ? 1800 : 1400) : (compact ? 720 : 620)
+  const renderedFlowHeight = Math.round(Math.max(minHeight, Math.min(maxHeight, desiredHeight)))
+  flow.style.height = `${renderedFlowHeight}px`
+  if (state.openGraphNodes.size) flow.style.setProperty('--expanded-height', `${renderedFlowHeight}px`)
   const byGraphId = Object.fromEntries(graphNodes.map(item => [item.id, item]))
   const shell = node('div', 'graph-shell')
-  const svg = svgNode('svg', { class: 'work-graph', role: 'img', preserveAspectRatio: 'xMidYMin meet', 'aria-labelledby': 'graph-title graph-description' })
-  svg.append(svgNode('title', { id: 'graph-title' }, 'Agent work dependency and observation flow'), svgNode('desc', { id: 'graph-description' }, 'Directed nodes show plan dependencies and the timed path from declared intent through connections to observed WordPress effects.'))
+  const svg = svgNode('svg', { class: 'work-graph', role: 'img', preserveAspectRatio: 'xMinYMin meet', 'aria-labelledby': 'graph-title graph-description' })
+  svg.append(svgNode('title', { id: 'graph-title' }, 'Stable WordPress agent-work topology'), svgNode('desc', { id: 'graph-description' }, 'The map starts at the top left. Durable WordPress objects retain their positions while declared actions, observed effects, and connection state update them over trail time.'))
   const defs = svgNode('defs')
   const pattern = svgNode('pattern', { id: 'graph-grid', width: 24, height: 24, patternUnits: 'userSpaceOnUse' })
   pattern.append(svgNode('circle', { cx: 1, cy: 1, r: 1, class: 'graph-grid-dot' }))
@@ -369,25 +435,50 @@ function renderComponents(model) {
   defs.append(pattern, marker)
   svg.append(defs, svgNode('rect', { width: '100%', height: '100%', class: 'graph-grid-fill' }))
   const world = svgNode('g', { class: 'graph-world' })
-  const edgePath = (from, to) => {
+  const edgeGroups = new Map()
+  for (const edge of graphEdges) {
+    const list = edgeGroups.get(edge.to) || []
+    list.push(edge)
+    edgeGroups.set(edge.to, list)
+  }
+  for (const list of edgeGroups.values()) list.forEach((edge, index) => { edge.laneOffset = (index - (list.length - 1) / 2) * 12 })
+  const edgePath = (from, to, edge) => {
+    const laneOffset = edge?.laneOffset || 0
     const vertical = Math.abs(from.x - to.x) < 30 || compact
     if (vertical) {
-      const x1 = from.x + nodeW / 2, y1 = from.y + nodeH, x2 = to.x + nodeW / 2, y2 = to.y
+      const x1 = from.x + nodeW / 2 + laneOffset, y1 = from.y + nodeH, x2 = to.x + nodeW / 2 + laneOffset, y2 = to.y
       const bend = Math.max(38, Math.abs(y2 - y1) / 2)
       return `M${x1} ${y1}C${x1} ${y1 + bend} ${x2} ${y2 - bend} ${x2} ${y2}`
     }
     const forward = to.x >= from.x
-    const x1 = from.x + (forward ? nodeW : 0), y1 = from.y + nodeH / 2, x2 = to.x + (forward ? 0 : nodeW), y2 = to.y + nodeH / 2
+    const x1 = from.x + (forward ? nodeW : 0), y1 = from.y + nodeH / 2 + laneOffset, x2 = to.x + (forward ? 0 : nodeW), y2 = to.y + nodeH / 2 + laneOffset
     const bend = Math.max(44, Math.abs(x2 - x1) / 2)
     return `M${x1} ${y1}C${x1 + (forward ? bend : -bend)} ${y1} ${x2 + (forward ? -bend : bend)} ${y2} ${x2} ${y2}`
   }
   for (const edge of graphEdges) {
     const from = byGraphId[edge.from], to = byGraphId[edge.to]
     if (!from || !to) continue
-    const pathData = edgePath(from, to)
-    world.append(svgNode('path', { d: pathData, class: `graph-edge ${edge.kind}${edge.active ? ' active' : ''}${edge.future ? ' future' : ''}`, 'aria-hidden': edge.future ? true : null, 'marker-end': edge.kind === 'link' || edge.future ? null : 'url(#graph-arrow)' }))
+    const pathData = edgePath(from, to, edge)
+    world.append(svgNode('path', { d: pathData, class: `graph-edge ${edge.kind}${edge.flowState ? ` ${edge.flowState}` : ''}${edge.active ? ' active' : ''}${edge.future ? ' future' : ''}`, 'data-edge-id': edge.id, 'data-flow-state': edge.flowState, 'data-from': edge.from, 'data-to': edge.to, style: edge.active ? `--flow-duration:${edge.duration}ms` : null, 'aria-hidden': edge.future ? true : null, 'marker-end': edge.kind === 'link' || edge.future ? null : 'url(#graph-arrow)' }))
+    if (edge.label && !edge.future) {
+      const vertical = Math.abs(from.x - to.x) < 30 || compact
+      const sameRow = !vertical && Math.abs(from.y - to.y) < 30
+      world.append(svgNode('text', {
+        class: `graph-edge-label${edge.active ? ' active' : ''}`,
+        x: vertical ? to.x + nodeW / 2 + edge.laneOffset : sameRow ? (from.x + nodeW + to.x) / 2 : to.x - 14,
+        y: vertical ? to.y - 12 : sameRow ? to.y - 12 : to.y + nodeH / 2 + edge.laneOffset - 9,
+        'text-anchor': vertical || sameRow ? 'middle' : 'end',
+      }, edge.label.slice(0, 44)))
+    }
+    if (edge.claim && !edge.future) {
+      world.append(svgNode('text', {
+        class: 'graph-flow-claim',
+        x: to.x + 16,
+        y: to.y + nodeH / 2 - 18,
+      }, `Claim · ${edge.claim.length > 48 ? `${edge.claim.slice(0, 47)}…` : edge.claim}`))
+    }
     if (edge.active) {
-      const particle = svgNode('circle', { r: 5, class: 'energy-particle' })
+      const particle = svgNode('circle', { r: 5, class: 'energy-particle', 'data-edge-id': edge.id, 'data-duration': edge.duration })
       particle.append(svgNode('animateMotion', { dur: `${edge.duration}ms`, repeatCount: 'indefinite', path: pathData }))
       world.append(particle)
     }
@@ -402,20 +493,34 @@ function renderComponents(model) {
     }
     return lines
   }
+  const clip = (value, max) => {
+    const rendered = String(value)
+    return rendered.length > max ? `${rendered.slice(0, max - 1)}…` : rendered
+  }
   for (const item of graphNodes) {
     const open = state.openGraphNodes.has(item.id)
-    const detailNoun = item.kind === 'component' ? 'tasks' : 'properties'
-    const group = svgNode('g', { class: `graph-node ${item.status} ${item.kind}${open ? ' selected' : ''}${item.future ? ' future' : ''}`, transform: `translate(${item.x} ${item.y})`, tabindex: item.future ? null : 0, role: item.future ? null : 'button', 'aria-hidden': item.future ? true : null, 'aria-expanded': item.future ? null : open, 'aria-label': item.future ? null : `${open ? 'Hide' : 'Show'} ${detailNoun} for ${item.title}` })
-    group.append(svgNode('rect', { class: 'graph-node-box', width: nodeW, height: nodeH, rx: 12 }), svgNode('circle', { class: 'graph-port', cx: 0, cy: nodeH / 2, r: 4 }), svgNode('circle', { class: 'graph-port', cx: nodeW, cy: nodeH / 2, r: 4 }))
-    group.append(svgNode('text', { class: 'graph-node-kind', x: 16, y: 24 }, String(item.kicker).slice(0, 48)))
-    titleLines(item.title).forEach((line, index) => group.append(svgNode('text', { class: 'graph-node-title', x: 16, y: 52 + index * 19 }, line)))
-    group.append(svgNode('text', { class: 'graph-node-meta', x: 16, y: 82 }, item.meta.slice(0, 58)))
-    group.append(svgNode('rect', { class: 'graph-progress-bg', x: 16, y: 96, width: nodeW - 32, height: 4, rx: 2 }), svgNode('rect', { class: 'graph-progress', x: 16, y: 96, width: (nodeW - 32) * item.progress, height: 4, rx: 2 }))
-    group.append(svgNode('text', { class: 'graph-node-action', x: 16, y: 119 }, open ? 'HIDE DETAILS ↑' : `SHOW ${item.kind === 'component' ? 'TASKS' : 'PROPERTIES'} ↓`))
-    const status = svgNode('g', { class: 'graph-node-status', transform: `translate(${nodeW - 26} 26)` })
-    status.append(svgNode('circle', { r: 8 }))
-    if (item.status === 'done') status.append(svgNode('path', { d: 'M-4 0l3 3 6-7' }))
-    group.append(status)
+    const detailNoun = item.kind === 'component' ? 'tasks' : item.kind === 'entity' ? 'history' : 'details'
+    const group = svgNode('g', { class: `graph-node ${item.status} ${item.flowState || ''} ${item.kind}${open ? ' selected' : ''}${item.future ? ' future' : ''}${item.current ? ' current' : ''}`, 'data-node-id': item.id, 'data-node-kind': item.kind, 'data-node-group': item.group, 'data-flow-state': item.flowState, transform: `translate(${item.x} ${item.y})`, tabindex: item.future ? null : 0, role: item.future ? null : 'button', 'aria-hidden': item.future ? true : null, 'aria-expanded': item.future ? null : open, 'aria-label': item.future ? null : `${open ? 'Hide' : 'Show'} ${detailNoun} for ${item.title}` })
+    group.append(svgNode('rect', { class: 'graph-node-box', width: nodeW, height: nodeH, rx: 8 }), svgNode('circle', { class: 'graph-port', cx: 0, cy: nodeH / 2, r: 4 }), svgNode('circle', { class: 'graph-port', cx: nodeW, cy: nodeH / 2, r: 4 }))
+    group.append(svgNode('text', { class: 'graph-node-kind', x: 16, y: 25 }, String(item.kicker).slice(0, 48)))
+    const lines = titleLines(item.title)
+    lines.forEach((line, index) => group.append(svgNode('text', { class: 'graph-node-title', x: 16, y: 54 + index * 20 }, line)))
+    const metaY = 54 + (lines.length - 1) * 20 + 28
+    if (item.kind === 'entity' || item.kind === 'site') {
+      group.append(svgNode('text', { class: 'graph-node-state', x: 16, y: metaY }, clip(item.stateLine, 52)))
+      group.append(svgNode('text', { class: 'graph-node-last-change', x: 16, y: metaY + 24 }, clip(item.lastChangeLine, 52)))
+      group.append(svgNode('text', { class: 'graph-node-history', x: 16, y: nodeH - 14 }, open ? item.historyLabel.replace('open history', 'close history') : item.historyLabel))
+    } else {
+      group.append(svgNode('text', { class: 'graph-node-meta', x: 16, y: metaY }, item.meta.slice(0, 58)))
+      group.append(svgNode('rect', { class: 'graph-progress-bg', x: 16, y: 120, width: nodeW - 32, height: 4, rx: 2 }), svgNode('rect', { class: 'graph-progress', x: 16, y: 120, width: (nodeW - 32) * item.progress, height: 4, rx: 2 }))
+      group.append(svgNode('text', { class: 'graph-node-action', x: 16, y: 153 }, open ? 'Hide details ↑' : `Show ${item.kind === 'component' ? 'tasks' : 'properties'} ↓`))
+    }
+    if (item.kind !== 'entity' && item.kind !== 'site') {
+      const status = svgNode('g', { class: 'graph-node-status', transform: `translate(${nodeW - 26} 26)` })
+      status.append(svgNode('circle', { r: 8 }))
+      if (item.status === 'done') status.append(svgNode('path', { d: 'M-4 0l3 3 6-7' }))
+      group.append(status)
+    }
     const select = () => {
       open ? state.openGraphNodes.delete(item.id) : state.openGraphNodes.add(item.id)
       if (item.seq) state.selectedSeq = item.seq
@@ -481,7 +586,34 @@ function renderComponents(model) {
   updateView()
 }
 
-function renderLedger(model) {
+function renderLedger(model, topology = currentTopology(model)) {
+  if (topology.changes.length) {
+    const rows = [...topology.changes].reverse().map(change => {
+      const button = node('button', 'ledger-row')
+      button.type = 'button'
+      button.dataset.class = change.status === 'confirmed' ? 'observed' : 'declared'
+      button.setAttribute('aria-pressed', String(change.seq === state.selectedSeq))
+      button.append(node('span', 'ledger-time', formatClock(change.ts)))
+      const evidence = node('span', 'ledger-evidence')
+      evidence.append(document.createElement('i'))
+      const copy = node('span')
+      copy.append(
+        node('strong', '', `${change.verb} ${change.placeTitle}`),
+        node('span', '', change.confirmation
+          ? `${change.claim ? 'Claim + confirmation' : 'Confirmation without claim'} · ${change.confirmation.summary}`
+          : `${change.status === 'in-flight' ? 'Claim in flight' : 'Unconfirmed claim'} · ${change.claim?.summary || change.verb}`),
+      )
+      evidence.append(copy)
+      button.append(evidence, node('span', 'channel-tag', displayChannel(change.channel)))
+      button.addEventListener('click', () => {
+        state.selectedSeq = change.seq
+        render(model)
+      })
+      return button
+    })
+    $('ledger-rows').replaceChildren(...rows)
+    return
+  }
   const events = (model.recent || []).slice(0, 70)
   const rows = events.map(event => {
     const button = node('button', 'ledger-row')
@@ -576,14 +708,15 @@ function renderDetail(model) {
 }
 
 function render(model = currentProjection()) {
+  const topology = currentTopology(model)
   document.querySelector('.app-shell').dataset.appState = 'ready'
   document.querySelector('.app-shell').dataset.mode = state.mode
   renderHeader(model)
   renderSessions(model)
   renderOrbit(model)
-  renderBrief(model)
-  renderComponents(model)
-  renderLedger(model)
+  renderBrief(model, topology)
+  renderComponents(model, topology)
+  renderLedger(model, topology)
   renderPresence(model)
   renderWordPress(model)
   renderDetail(model)
@@ -620,7 +753,6 @@ async function selectSession(sessionId) {
   }
   state.replayEvents = await fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/events`)
   state.replayIndex = buildReplayIndex(state.replayEvents)
-  state.replayFinalModel = projectEvents(state.replayEvents)
   state.sessionId = sessionId
   state.mode = 'replay'
   state.cursor = Math.max(0, state.replayEvents.length - 1)
@@ -652,7 +784,6 @@ function setMode(mode) {
     if (!state.replayEvents.length) {
       state.replayEvents = [...state.liveEvents]
       state.replayIndex = buildReplayIndex(state.replayEvents)
-      state.replayFinalModel = projectEvents(state.replayEvents)
     }
     state.cursor = mode === 'timelapse' ? 0 : Math.max(0, state.replayEvents.length - 1)
   }

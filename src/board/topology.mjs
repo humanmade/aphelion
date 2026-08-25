@@ -14,8 +14,10 @@ const text = value => String(value ?? '').trim()
 const titleCase = value => text(value)
   .replace(/^_+/, '')
   .replace(/^yoast_wpseo_/, '')
+  .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
   .replace(/[-_./]+/g, ' ')
   .replace(/\b\w/g, character => character.toUpperCase())
+  .replace(/\b(?:Seo|Wp|Cli|Mcp)\b/g, word => ({ Seo: 'SEO', Wp: 'WP', Cli: 'CLI', Mcp: 'MCP' })[word])
 
 export function topologyEventClass(event) {
   if (!event?.kind) return null
@@ -121,8 +123,27 @@ function channel(event) {
   return text(event?.data?.channel || event?.source || 'unknown')
 }
 
+export function displayChannel(value) {
+  const normalized = text(value).toLowerCase()
+  return ({
+    'wp-cli': 'WP-CLI',
+    rest: 'REST',
+    mcp: 'MCP',
+    'wp-admin': 'wp-admin',
+    runtime: 'Runtime',
+    cron: 'Cron',
+  })[normalized] || titleCase(value)
+}
+
 function transport(event) {
   return text(event?.data?.transport || 'transport unknown')
+}
+
+function actor(event) {
+  const value = event?.data?.actor
+  if (typeof value === 'string') return text(value) || null
+  if (text(value?.login || value?.name)) return text(value.login || value.name)
+  return Number(value?.id) > 0 ? `User #${value.id}` : null
 }
 
 function eventSummary(event) {
@@ -135,15 +156,167 @@ function eventSummary(event) {
   return event.kind.replaceAll('.', ' ')
 }
 
+function observedVerb(event) {
+  const action = event.kind.split('.').at(-1)
+  return ({
+    created: 'Created',
+    deleted: 'Deleted',
+    executed: 'Executed',
+    restored: 'Restored',
+    trashed: 'Trashed',
+    updated: 'Updated',
+    changed: 'Changed',
+  })[action] || titleCase(action)
+}
+
+function claimedVerb(event) {
+  const first = eventSummary(event).split(/\s+/)[0]?.toLowerCase()
+  return ({
+    change: 'Changing…',
+    create: 'Creating…',
+    delete: 'Deleting…',
+    edit: 'Editing…',
+    inspect: 'Inspecting…',
+    restore: 'Restoring…',
+    set: 'Setting…',
+    trash: 'Trashing…',
+    update: 'Updating…',
+  })[first] || 'Changing…'
+}
+
+function stateData(event) {
+  const data = event.data || {}
+  return {
+    status: data.status || null,
+    blockCount: Number.isFinite(data.blockCount) ? data.blockCount : null,
+    restored: data.restored === true,
+    beforeType: data.beforeType || null,
+    afterType: data.afterType || data.valueType || null,
+    metaKey: data.metaKey || null,
+  }
+}
+
+function changeRecords(history, relatedEdges) {
+  const claims = new Map()
+  const openClaims = new Map()
+  const changes = []
+
+  for (const item of history) {
+    const id = item.requestId || `seq:${item.seq}`
+    if (item.class === 'declared') {
+      const claim = {
+        seq: item.seq,
+        ts: item.ts,
+        summary: item.summary,
+        channel: item.channel,
+        transport: item.transport,
+        actor: item.actor,
+      }
+      claims.set(id, claim)
+      const record = {
+        id: `change:${id}:claim:${item.seq}`,
+        requestId: item.requestId,
+        claim,
+        confirmation: null,
+        verb: claimedVerb(item),
+        status: 'in-flight',
+        seq: item.seq,
+        ts: item.ts,
+        channel: item.channel,
+        actor: item.actor,
+        transport: item.transport,
+        state: item.state,
+      }
+      changes.push(record)
+      openClaims.set(id, record)
+      continue
+    }
+    if (item.class !== 'observed') continue
+
+    const claim = claims.get(id) || null
+    const open = openClaims.get(id)
+    const confirmation = {
+      seq: item.seq,
+      ts: item.ts,
+      summary: item.summary,
+      kind: item.kind,
+      channel: item.channel,
+      transport: item.transport,
+      actor: item.actor,
+      state: item.state,
+    }
+    if (open && !open.confirmation) {
+      Object.assign(open, {
+        confirmation,
+        verb: observedVerb(item),
+        status: 'confirmed',
+        seq: item.seq,
+        ts: item.ts,
+        channel: item.channel || open.channel,
+        actor: item.actor || open.actor,
+        transport: item.transport || open.transport,
+        state: item.state,
+      })
+      openClaims.delete(id)
+    } else {
+      changes.push({
+        id: `change:${id}:effect:${item.seq}`,
+        requestId: item.requestId,
+        claim,
+        confirmation,
+        verb: observedVerb(item),
+        status: 'confirmed',
+        seq: item.seq,
+        ts: item.ts,
+        channel: item.channel || claim?.channel || 'unknown',
+        actor: item.actor || claim?.actor || null,
+        transport: item.transport || claim?.transport || 'transport unknown',
+        state: item.state,
+      })
+    }
+  }
+
+  for (const change of changes) {
+    if (change.confirmation) continue
+    const edge = relatedEdges.find(candidate => !candidate.future && candidate.requests.includes(change.requestId))
+    change.status = edge?.active ? 'in-flight' : 'unconfirmed'
+  }
+  return changes
+}
+
+function placeState(entity, changes) {
+  const confirmations = changes.filter(change => change.confirmation)
+  const latest = confirmations.at(-1)
+  const relevant = confirmations.map(change => change.state).filter(Boolean)
+  const latestStatus = [...relevant].reverse().find(state => state.status)?.status
+  const blockCount = [...relevant].reverse().find(state => state.blockCount !== null)?.blockCount
+
+  if (['page', 'post', 'content'].includes(entity.type)) {
+    const status = latestStatus || (latest?.confirmation?.kind.endsWith('.trashed') ? 'trash' : null)
+    const parts = [status ? titleCase(status) : entity.type === 'page' ? 'Page' : 'Content']
+    if (blockCount !== undefined && blockCount !== null) parts.push(`${blockCount} ${blockCount === 1 ? 'block' : 'blocks'}`)
+    return parts.join(' · ')
+  }
+  if (entity.type === 'option') {
+    const state = latest?.state || {}
+    const type = ({ string: 'Text value', integer: 'Number', number: 'Number', boolean: 'Boolean' })[state.afterType] || 'Value'
+    return `${type} · ${state.restored ? 'restored' : latest ? 'changed' : 'unchanged'}`
+  }
+  if (entity.type === 'plugin') return `${confirmations.length} confirmed ${confirmations.length === 1 ? 'change' : 'changes'}`
+  return confirmations.length ? `${confirmations.length} confirmed ${confirmations.length === 1 ? 'change' : 'changes'}` : 'No confirmed changes'
+}
+
 function mergeEntity(previous, incoming) {
   if (!previous) return { ...incoming }
-  const nextType = previous.type === 'content' && ['page', 'post'].includes(incoming.type) ? incoming.type : previous.type
-  const genericTitle = /^(?:Content|Page|Post) #\d+$/.test(previous.title)
+  const canRefineType = ['object', 'content'].includes(previous.type) && !['object', 'content'].includes(incoming.type)
+  const nextType = canRefineType ? incoming.type : previous.type
+  const genericTitle = entity => entity.title === entity.identity || /^(?:Content|Page|Post) #\d+$/.test(entity.title)
+  const canRefineTitle = genericTitle(previous) && (canRefineType || !genericTitle(incoming))
   return {
     ...previous,
     type: nextType,
     category: incoming.category || previous.category,
-    title: genericTitle && incoming.title ? incoming.title : previous.title,
+    title: canRefineTitle && incoming.title ? incoming.title : previous.title,
     plugin: incoming.plugin || previous.plugin || null,
   }
 }
@@ -196,6 +369,7 @@ function analyze(events, requestTargets) {
   const edges = new Map()
   const requestStates = new Map()
   let currentTargets = []
+  let currentEdgeKey = null
 
   const ensureEntity = (key, event) => {
     const direct = resolveTopologyEntity(event)
@@ -222,18 +396,45 @@ function analyze(events, requestTargets) {
 
   const ensureRequest = id => {
     if (!id) return null
-    if (!requestStates.has(id)) requestStates.set(id, { id, declared: false, observed: false, open: false })
+    if (!requestStates.has(id)) requestStates.set(id, {
+      id,
+      declared: false,
+      observed: false,
+      open: false,
+      declaredAt: null,
+      observedAt: null,
+      openedAt: null,
+      closedAt: null,
+      lastAt: null,
+      actor: null,
+    })
     return requestStates.get(id)
   }
 
   for (const event of events) {
     const classification = topologyEventClass(event)
     const eventTargets = targetsForEvent(event, requestTargets)
+    currentEdgeKey = null
     const id = requestId(event)
     const request = ensureRequest(id)
-    if (classification === 'declared' && request) request.declared = true
-    if (classification === 'observed' && request) request.observed = true
-    if (classification === 'presence' && request) request.open = !TERMINAL_PHASES.has(event.kind.slice('presence.'.length))
+    if (request) {
+      request.lastAt = event.ts
+      request.actor = actor(event) || request.actor
+    }
+    if (classification === 'declared' && request) {
+      request.declared = true
+      request.declaredAt ??= event.ts
+    }
+    if (classification === 'observed' && request) {
+      request.observed = true
+      request.observedAt ??= event.ts
+    }
+    if (classification === 'presence' && request) {
+      const phase = event.kind.slice('presence.'.length)
+      request.open = !TERMINAL_PHASES.has(phase)
+      if (request.open) request.openedAt ??= event.ts
+      else request.closedAt = event.ts
+    }
 
     if (classification !== 'presence') {
       for (const key of eventTargets) {
@@ -251,6 +452,9 @@ function analyze(events, requestTargets) {
           summary: eventSummary(event),
           channel: channel(event),
           transport: transport(event),
+          actor: actor(event),
+          requestId: id,
+          state: stateData(event),
         })
         if (classification === 'declared') entity.declaredCount++
         if (classification === 'observed') entity.observedCount++
@@ -274,28 +478,57 @@ function analyze(events, requestTargets) {
         requests: new Set(),
         lastSeq: event.seq,
         lastAt: event.ts,
+        lastRequestId: id,
         phase: classification || 'record',
+        classification: classification || 'record',
+        actor: actor(event),
       })
       const edge = edges.get(edgeKey)
       edge.transports.add(transport(event))
       if (id) edge.requests.add(id)
       edge.lastSeq = event.seq
       edge.lastAt = event.ts
+      edge.lastRequestId = id || edge.lastRequestId
       edge.phase = classification === 'presence' ? event.kind.slice('presence.'.length) : classification || 'record'
+      edge.classification = classification || 'record'
+      edge.actor = actor(event) || edge.actor
+      currentEdgeKey = edgeKey
     }
     currentTargets = eventTargets
   }
 
   for (const edge of edges.values()) {
     const states = [...edge.requests].map(id => requestStates.get(id)).filter(Boolean)
-    edge.active = states.some(request => request.open || (request.declared && !request.observed))
-    edge.current = currentTargets.includes(edge.to)
+    edge.connected = states.some(request => request.open)
+    edge.active = edge.connected || states.some(request => request.declared && !request.observed)
+    edge.current = `${edge.to}|${edge.channel}` === currentEdgeKey
+    const latest = requestStates.get(edge.lastRequestId) || states.toSorted((a, b) => (b.lastAt || 0) - (a.lastAt || 0))[0]
+    const measured = latest?.declaredAt && (latest.observedAt || latest.lastAt)
+      ? (latest.observedAt || latest.lastAt) - latest.declaredAt
+      : latest?.openedAt && latest?.closedAt
+        ? latest.closedAt - latest.openedAt
+        : null
+    edge.durationMs = Number.isFinite(measured) && measured > 0 ? measured : 1200
+    edge.actor = latest?.actor || edge.actor || null
+    edge.flowState = edge.current && edge.classification === 'observed'
+      ? 'settled'
+      : edge.current && edge.connected
+        ? 'live'
+        : edge.current && states.some(request => request.declared && !request.observed)
+          ? 'claimed'
+          : edge.connected
+            ? 'live'
+            : 'idle'
+    edge.active = edge.current && ['claimed', 'live'].includes(edge.flowState)
   }
 
-  return { entities, entityOrder, edges, currentTargets }
+  return { entities, entityOrder, edges, currentTargets, currentEdgeKey }
 }
 
-function serializeEntity(entity, order, visible, edges) {
+function serializeEntity(entity, order, visible, edges, seen = true) {
+  const relatedEdges = edges.filter(edge => edge.to === entity.key)
+  const changes = seen ? changeRecords(entity.history, relatedEdges) : []
+  const latestChange = changes.at(-1) || null
   if (!visible) return {
     id: entity.key,
     key: entity.key,
@@ -305,7 +538,10 @@ function serializeEntity(entity, order, visible, edges) {
     title: entity.title,
     order,
     future: true,
-    history: [],
+    history: seen ? entity.history : [],
+    changes,
+    stateLine: placeState(entity, changes),
+    lastChange: latestChange,
     properties: [],
     channels: [],
     transports: [],
@@ -313,10 +549,10 @@ function serializeEntity(entity, order, visible, edges) {
     runCount: 0,
     declaredCount: 0,
     observedCount: 0,
-    active: false,
-    current: false,
+    active: relatedEdges.some(edge => edge.active),
+    current: relatedEdges.some(edge => edge.current),
+    flowState: relatedEdges.find(edge => edge.current)?.flowState || (relatedEdges.some(edge => edge.connected) ? 'live' : 'idle'),
   }
-  const relatedEdges = edges.filter(edge => edge.to === entity.key)
   return {
     id: entity.key,
     key: entity.key,
@@ -331,15 +567,19 @@ function serializeEntity(entity, order, visible, edges) {
     lastSeq: entity.lastSeq,
     lastAt: entity.lastAt,
     history: entity.history,
+    changes,
+    stateLine: placeState(entity, changes),
+    lastChange: latestChange,
     properties: [...entity.properties.values()],
     channels: [...entity.channels],
     transports: [...entity.transports],
     plugins: [...entity.plugins],
-    runCount: entity.requestIds.size || Math.max(entity.declaredCount, entity.observedCount, 1),
+    runCount: entity.requestIds.size || Math.max(changes.length, 1),
     declaredCount: entity.declaredCount,
     observedCount: entity.observedCount,
     active: relatedEdges.some(edge => edge.active),
     current: relatedEdges.some(edge => edge.current),
+    flowState: relatedEdges.find(edge => edge.current)?.flowState || (relatedEdges.some(edge => edge.connected) ? 'live' : 'idle'),
   }
 }
 
@@ -364,6 +604,7 @@ export function buildSiteTopology(events, options = {}) {
       transports: [...edge.transports],
       requests: [],
       active: false,
+      connected: false,
       current: false,
       future: true,
     }
@@ -371,31 +612,50 @@ export function buildSiteTopology(events, options = {}) {
   const nodes = blueprint.entityOrder.map((key, order) => {
     const blueprintEntity = blueprint.entities.get(key)
     const visibleEntity = visible.entities.get(key)
-    return serializeEntity(visibleEntity || blueprintEntity, order, Boolean(visibleEntity), edges)
+    return serializeEntity(visibleEntity || blueprintEntity, order, Boolean(visibleEntity?.observedCount), edges, Boolean(visibleEntity))
   })
   const visibleNodes = nodes.filter(node => !node.future)
-  const target = options.target || visibleEvents.find(event => event.kind === 'session.start')?.data?.target || 'Local WordPress site'
+  const session = visibleEvents.find(event => event.kind === 'session.start')?.data || {}
+  const target = options.target || session.target || 'Local WordPress site'
+  const address = target.includes('://') ? new URL(target).host : target
+  const siteName = options.siteName || session.siteName || session.targetName || session.siteTitle || session.blogname || address
   const activeEdges = edges.filter(edge => !edge.future && edge.active)
+  const visibleFlows = edges.filter(edge => !edge.future)
+  const latestFlow = visibleFlows.toSorted((a, b) => (b.lastAt || 0) - (a.lastAt || 0))[0] || null
+  const rootFlow = visibleFlows.find(edge => edge.connected) || visibleFlows.find(edge => edge.active) || latestFlow
+  const allChanges = nodes.flatMap(node => node.changes.map(change => ({ ...change, placeId: node.id, placeTitle: node.title })))
+    .toSorted((a, b) => a.seq - b.seq)
+  const focusEdge = visibleFlows.find(edge => edge.current) || null
+  const focusChange = focusEdge
+    ? [...allChanges].reverse().find(change => change.placeId === focusEdge.to && (!focusEdge.lastRequestId || change.requestId === focusEdge.lastRequestId)) || null
+    : null
   return {
     root: {
       id: 'wp:site',
       key: 'wp:site',
       type: 'site',
       category: 'site',
-      title: 'WordPress site',
+      identity: address,
+      title: siteName,
       target,
       future: false,
       active: activeEdges.length > 0,
       current: false,
+      flowState: focusEdge?.flowState || 'idle',
       runCount: new Set(visibleEdges.flatMap(edge => [...edge.requests])).size,
       objectCount: visibleNodes.length,
       channelCount: new Set(visibleEdges.map(edge => edge.channel)).size,
       history: [],
+      changes: allChanges,
+      stateLine: `${visibleNodes.length} ${visibleNodes.length === 1 ? 'place' : 'places'} touched${rootFlow ? ` · ${displayChannel(rootFlow.channel)} ${rootFlow.connected ? 'live' : rootFlow.active ? 'in flight' : 'idle'}` : ''}`,
+      lastChange: allChanges.at(-1) || null,
       properties: [],
     },
     nodes,
     edges,
     currentTargets: visible.currentTargets,
+    changes: allChanges,
+    focus: focusChange && focusEdge ? { change: focusChange, edge: focusEdge, place: nodes.find(node => node.id === focusEdge.to) || null } : null,
   }
 }
 

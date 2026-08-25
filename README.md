@@ -2,7 +2,7 @@
 
 **The local flight recorder for AI agents working on WordPress.**
 
-![Aphelion maps declared intent, connector state, and independently observed WordPress effects as one timed journey](https://cdn.jsdelivr.net/npm/aphelion@latest/assets/aphelion-board.png)
+![Aphelion replays agent work over a stable map of the WordPress objects it touched](https://cdn.jsdelivr.net/npm/aphelion@latest/assets/aphelion-board.png)
 
 An agent says it updated a page. The filesystem shows a diff. WordPress reports a save.
 Those are three fragments of one story, usually scattered across terminals, session logs,
@@ -69,6 +69,19 @@ WP-CLI/MCP ──┘                     └─> timelapse
 Live and replay use the same reducer. Timelapse is generated from the same events. No view
 owns a second history, so a crash-ended session remains readable and a malformed line cannot
 hide later valid evidence.
+
+The board speaks three nouns: **places**, **flows**, and **changes**. A page, setting, plugin,
+Ability, or site is a place with one stable node per session. A channel is a reusable flow into
+that place. A change is a timed claim and WordPress confirmation preserved together in history,
+never another card. Place cards show only where they are, what they are called, their current
+state, their latest change, and the door to history. Replay advances light, motion, state, and
+history over the same top-left layout, so a place never jumps merely because time moved forward.
+
+Declared work is shown as `in flight`; `live` is reserved for an active presence connection.
+Edge motion uses the recorded request or connection duration, falling back to 1200ms only when
+no positive gap is measurable. Opening a place exposes its scrollable change history; request
+IDs, transports, and raw event data remain in the inspector rather than riding the canvas. Maps are
+rebuilt per session; clustering and durable cross-session site maps remain deferred.
 
 ## Add WordPress evidence
 

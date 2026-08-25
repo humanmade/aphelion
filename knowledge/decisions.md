@@ -7,13 +7,33 @@ This file is auto-generated from `decisions.jsonl`. Edit records there, then run
 
 | ID | Title | Status | Date |
 |---|---|---|---|
-| DEC-001 | Model WordPress topology as durable nouns | accepted | 2026-08-25 |
+| DEC-002 | Model topology as places, flows, and changes | accepted | 2026-08-25 |
+| DEC-001 | Model WordPress topology as durable nouns | superseded | 2026-08-25 |
 
 ## Records
 
+### DEC-002: Model topology as places, flows, and changes
+
+**Status:** accepted
+**Date:** 2026-08-25
+
+#### Context
+
+Durable node identity fixed duplicate phase cards, but the board still allowed activity language on place cards, transport plumbing on edges, claims as property rows, and raw events to compete with the map. The result remained difficult to read during replay and could not answer where work happens, what is happening now, and what changed with one owner per layer.
+
+#### Decision
+
+Adopt `docs/topology-language.md` as binding. Places are the only positioned nouns; flows are reusable channel edges whose liveness comes from connection state; changes are timed claim and WordPress-confirmation records that update a place and accumulate in history. Cards carry at most kicker, name, state line, latest change, and history affordance. Canvas labels show channels rather than transports, and playback focuses at most one ordered landing while positions remain append-stable from the top left.
+
+#### Consequences
+
+Live, replay, and timelapse must project the same place, flow, and change language from the trail. Claims never become card rows or facts, transports and request IDs stay in the inspector, revisits update existing places, and future topology proposals are judged by the three-questions test. The older generic durable-noun record is superseded.
+
+---
+
 ### DEC-001: Model WordPress topology as durable nouns
 
-**Status:** accepted  
+**Status:** superseded
 **Date:** 2026-08-25
 
 #### Context
@@ -26,9 +46,6 @@ Resolve declared and observed events onto stable entity keys such as `wp:post:46
 
 #### Consequences
 
-The trail and correlation reducer remain intact while the board projection and layout are replaced. Repeated actions become counts and history on one node, bare connector activity creates no node, replay preserves spatial memory, and clustering can later compact entity groups without changing identity.
+Superseded by DEC-002, which preserves durable identity while replacing generic evidence/property rows with the binding place, flow, and change language.
 
 ---
-- 2026-08-25: UI direction superseded: engineering-instrument monochrome (Vercel/v0 register), dark-first, Geist Sans/Mono vendored (OFL), Geist Pixel for timelapse titles only. Hue carries state exclusively: declared=blue, observed/live=emerald, attention=amber, danger=red — replaces the electric-blue/amber/green mapping. Locked in DESIGN.md.
-- 2026-08-25: Board stack change: React + Tailwind + shadcn/ui + ReUI built with Vite, shipped as prebuilt static assets in the npm package. Supersedes the no-build static-source decision for browser assets; the daemon and shipped runtime remain dependency-free at install time.
-- 2026-08-25: Motion continuity is a contract: every state change is a continuous transition (FLIP layout glides, birth reveals, animated expand/collapse, cross-faded state) with two shared easing tokens and interruptible, seek-safe playback — inherited deliberately from upstream agenttrail and preserved through the React port.
