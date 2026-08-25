@@ -2,7 +2,7 @@
 
 All notable changes to Aphelion are documented here.
 
-## 0.1.0 - Unreleased
+## 0.1.0 - 2026-08-25
 
 - Add the append-only JSONL trail and shared live/replay reducer.
 - Add the local dark-mode journey board and standalone HTML timelapse.
