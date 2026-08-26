@@ -41,9 +41,12 @@ jobs:
         run: npm install --global npm@11.16.0 --ignore-scripts
       - name: Require a clean release version
         run: |
-          node -e "const p=require('./package.json'); if (/[-+]/.test(p.version)) { throw new Error('Publish requires a stable semver version') }"
-          if npm view "aphelion@$(node -p \"require('./package.json').version\")" version >/dev/null 2>&1; then
-            echo 'Version already exists on npm'
+          VERSION="$(node -p 'require("./package.json").version')"
+          case "$VERSION" in
+            *-*|*+*) echo "Publish requires a stable semver version"; exit 1 ;;
+          esac
+          if npm view "aphelion@$VERSION" version >/dev/null 2>&1; then
+            echo "Version already exists on npm"
             exit 1
           fi
       - run: npm ci --ignore-scripts
