@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/aphelion.svg)](https://www.npmjs.com/package/aphelion)
 [![npm downloads](https://img.shields.io/npm/dm/aphelion.svg)](https://www.npmjs.com/package/aphelion)
 [![CI](https://github.com/humanmade/aphelion/actions/workflows/ci.yml/badge.svg)](https://github.com/humanmade/aphelion/actions/workflows/ci.yml)
-[![license](https://img.shields.io/github/license/humanmade/aphelion.svg)](./LICENSE)
+[![license](https://img.shields.io/npm/l/aphelion.svg)](./LICENSE)
 [![Socket Badge](https://socket.dev/api/badge/npm/package/aphelion)](https://socket.dev/npm/package/aphelion)
 
 ![A recorded agent session in the Aphelion timelapse: the site and its content, structure, plugin, and settings territories, with a WP-CLI change landing live on a plugin setting](assets/aphelion-board.jpg)
