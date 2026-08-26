@@ -10,27 +10,38 @@
 
 ![A recorded agent session in the Aphelion timelapse: the site and its content, structure, plugin, and settings territories, with a WP-CLI change landing live on a plugin setting](assets/aphelion-board.jpg)
 
-An agent says it updated a page. The filesystem shows a diff. WordPress reports a save.
-Aphelion records those fragments as one append-only local trail and renders the same record
-three ways: a live map while the agent works, a replay you can scrub when something needs
-explaining, and a timelapse you can share when something went right.
+An agent will tell you it updated a page, the filesystem will show you a diff, and
+WordPress will report a save — three fragments of one story, usually scattered across
+terminals and logs. Aphelion records them as a single append-only trail on your machine
+and renders that one record three ways: a live map while the agent works, a replay you
+can scrub when something needs explaining, and a timelapse worth sharing when it goes
+well. While the work happens it behaves like observability; afterward it holds up as an
+audit trail — accountability for agentic workflows with nothing leaving your machine.
 
-- **A map, not a log** — pages, settings, plugins, menus, and users appear as durable places
-  in WordPress-shaped territories; changes land on them with light and motion, one to two
-  seconds after they happen.
-- **Declared beside observed** — an agent's claim renders as a provisional place until
-  WordPress independently confirms it; agreement is silent, divergence is where you look.
-- **Replay any session** — scrub through a recorded trail on the same stable map; every
-  moment is deep-linkable (`?session=…&mode=replay&seq=…`).
-- **Timelapse after the fact** — render a shareable HTML/MP4 of any recorded session; you
-  never had to press record.
-- **WordPress-native depth** — block edits fold into their page, revisions into their post,
-  plugin options into their plugin's territory; owner-readable names throughout.
-- **Sessions that end** — idle sessions close and rotate automatically; the observer
-  version-handshakes so a stale mu-plugin warns instead of silently under-recording.
-- **Local by construction** — binds to `127.0.0.1`, no accounts, no telemetry; trails are
-  `0600` append-only JSONL files on your machine, never deleted automatically.
-- **Zero dependencies** — one command, Node 20+, nothing else.
+The board reads as a map rather than a log. Pages, settings, plugins, menus, and users
+are durable places grouped into WordPress-shaped territories, and each change lands on
+its place with light and motion within a second or two of happening. An agent's declared
+intent appears as a provisional card until WordPress independently confirms it, which
+keeps agreement quiet and makes divergence exactly the thing you notice. Any recorded
+session scrubs on the same stable map, deep-links to the moment
+(`?session=…&mode=replay&seq=…`), and can be rendered into a timelapse after the fact —
+nobody had to press record.
+
+What makes the record trustworthy:
+
+- **One append-only JSONL trail per session**, flushed on every event, file mode `0600`,
+  with optional SHA-256 hash chaining (`--integrity`) for tamper evidence. Every surface
+  is a projection of this file; no view owns a second history.
+- **Local by construction.** Binds to `127.0.0.1`, no accounts, no telemetry — the
+  evidence never leaves your machine, and it is never deleted automatically.
+- **Agent governance without injection.** `aphelion mcp -- <server>` wraps any MCP
+  server and records what agents *declare*, byte-transparent to their traffic: tool
+  names and argument keys, never values, content, or credentials.
+- **WordPress-native depth**: block edits fold into their page, revisions into their
+  post, plugin options into their plugin's territory, with owner-readable names
+  throughout. Sessions close on idle, and the observer warns when its mu-plugin is
+  stale rather than silently under-recording.
+- **Zero runtime dependencies** on Node 20+.
 
 ## Quickstart
 
@@ -134,6 +145,10 @@ The package exports the trail reader/writer, reducer, replay index, daemon, side
 WordPress scanner, Accelerate adapter, and timelapse renderer, with type declarations.
 
 ## Trail ownership and privacy
+
+The trail is the audit record: append-only, owned by you, and durable enough to answer
+"what did the agent actually do" months after the session — replay is the forensic view
+of the same file the live board projected.
 
 | Property | Contract |
 | --- | --- |
