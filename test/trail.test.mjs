@@ -31,7 +31,7 @@ test('writer flushes a readable append-only session with optional integrity link
 
   const events = await readTrail(writer.path)
   assert.deepEqual(events.map(item => item.kind), ['session.start', 'file.write', 'session.end'])
-  assert.equal(events[0].data.topologyVersion, 2)
+  assert.equal(events[0].data.topologyVersion, 3)
   assert.deepEqual(events.map(item => item.seq), [1, 2, 3])
   assert.equal(events[0].prev, undefined)
   assert.match(events[1].prev, /^[a-f0-9]{64}$/)

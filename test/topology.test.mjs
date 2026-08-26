@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildSiteTopology, confirmationMatchLabel, displayChannel, FULL_FIT_PLACE_LIMIT, groupTopologyChanges, INFERRED_CONFIRMATION_WINDOW_MS, layoutSiteTopology, OVERVIEW_IDLE_EDGE_LIMIT, resolveTopologyEntity, routeContainmentElbows, routeSiteTopologyEdges, siteCardHeight, topologyRunLabel, visibleTopologyEdges } from '../src/board/topology.mjs'
+import { buildSiteTopology, confirmationMatchLabel, DEFAULT_DESKTOP_CONTENT_COLUMNS, desktopContentColumnsForTopology, displayChannel, FULL_FIT_PLACE_LIMIT, groupTopologyChanges, INFERRED_CONFIRMATION_WINDOW_MS, layoutSiteTopology, LEGACY_DESKTOP_CONTENT_COLUMNS, OVERVIEW_IDLE_EDGE_LIMIT, resolveTopologyEntity, routeContainmentElbows, routeSiteTopologyEdges, siteCardHeight, topologyRunLabel, visibleTopologyEdges } from '../src/board/topology.mjs'
 
 const event = (seq, kind, data = {}, source = kind.startsWith('wp.') || kind.startsWith('presence.') ? 'wp' : 'agent') => ({
   v: 1,
@@ -349,6 +349,26 @@ test('declared work is in flight before presence makes its reusable edge live', 
   assert.equal(withPresence.edges[0].flowState, 'live')
 })
 
+test('replay presence relights only an existing place from its later observed target', () => {
+  const events = [
+    event(1, 'wp.option.updated', { requestId: 'seed', objectType: 'option', name: 'blogdescription', channel: 'mcp' }),
+    event(2, 'presence.open', { requestId: 'observed-only', connectionId: 'observed-only', channel: 'mcp', transport: 'stdio' }),
+    event(3, 'wp.option.updated', { requestId: 'observed-only', objectType: 'option', name: 'blogdescription', channel: 'mcp', transport: 'stdio' }),
+    event(4, 'presence.close', { requestId: 'observed-only', connectionId: 'observed-only', channel: 'mcp', transport: 'stdio' }),
+  ]
+  const opened = buildSiteTopology(events.slice(0, 2), { blueprintEvents: events })
+  const futureEvents = events.slice(1)
+  const futureOpened = buildSiteTopology(futureEvents.slice(0, 1), { blueprintEvents: futureEvents })
+
+  assert.equal(opened.nodes[0].future, false)
+  assert.equal(opened.edges[0].future, false)
+  assert.equal(opened.edges[0].active, true)
+  assert.equal(opened.edges[0].flowState, 'live')
+  assert.equal(futureOpened.nodes[0].future, true)
+  assert.equal(futureOpened.edges[0].future, true)
+  assert.equal(futureOpened.edges[0].active, false)
+})
+
 test('place cards derive noun, state, last change, and history without promoting claims', () => {
   const events = [
     event(1, 'session.start', { target: 'http://localhost:8081', siteName: 'Accelerate Demo' }, 'session'),
@@ -603,23 +623,33 @@ test('homogeneous change runs keep their verb while mixed runs stay generic', ()
   assert.equal(topologyRunLabel(groupTopologyChanges(settings.changes)[0]), 'updates')
 })
 
-test('desktop site layout uses append-stable category lanes', () => {
-  const events = []
+test('current desktop seed stays three columns regardless of first-render count', () => {
+  const events = [event(1, 'session.start', { target: 'http://localhost:8081', topologyVersion: 3 }, 'session')]
   for (let index = 0; index < 20; index++) {
-    events.push(event(index + 1, 'wp.post.updated', { objectType: 'post', objectId: index + 1, postType: 'page', title: `Page ${index + 1}`, channel: 'wp-cli' }))
+    events.push(event(index + 2, 'wp.post.updated', { objectType: 'post', objectId: index + 1, postType: 'page', title: `Page ${index + 1}`, channel: 'wp-cli' }))
   }
-  const layoutSeed = { desktopWrapColumns: 4 }
-  const first = layoutSiteTopology(buildSiteTopology(events.slice(0, 18)), { layoutSeed })
+  const layoutSeed = { desktopWrapColumns: desktopContentColumnsForTopology(3) }
+  const first = layoutSiteTopology(buildSiteTopology(events.slice(0, 19)), { layoutSeed })
   const final = layoutSiteTopology(buildSiteTopology(events), { layoutSeed })
+  const derived = layoutSiteTopology(buildSiteTopology(events))
   const compact = layoutSiteTopology(buildSiteTopology(events), { compact: true, layoutSeed })
+  const legacyEvents = events.map((item, index) => index === 0 ? event(1, 'session.start', { target: 'http://localhost:8081', topologyVersion: 2 }, 'session') : item)
+  const legacy = layoutSiteTopology(buildSiteTopology(legacyEvents))
   const finalPositions = new Map(final.nodes.map(node => [node.id, `${node.x}:${node.y}`]))
   const content = final.nodes.slice(1)
 
+  assert.equal(DEFAULT_DESKTOP_CONTENT_COLUMNS, 3)
+  assert.equal(LEGACY_DESKTOP_CONTENT_COLUMNS, 4)
+  assert.equal(desktopContentColumnsForTopology(2), 4)
+  assert.equal(desktopContentColumnsForTopology(3), 3)
+  assert.equal(new Set(legacy.nodes.map(node => node.x)).size, 5)
+  assert.deepEqual(derived.nodes.map(node => [node.id, node.x, node.y]), final.nodes.map(node => [node.id, node.x, node.y]))
   assert.equal(final.lanes.length, 1)
   assert.equal(new Set(content.map(node => node.x)).size, 4)
-  assert.equal(new Set(content.map(node => node.y)).size, 5)
+  assert.equal(new Set(content.map(node => node.y)).size, 6)
   for (const node of first.nodes) assert.equal(`${node.x}:${node.y}`, finalPositions.get(node.id))
-  assert.deepEqual(compact.lanes.map(lane => [lane.category, lane.compact]), [['content', true]])
+  assert.equal(new Set(compact.nodes.map(node => node.x)).size, 1)
+  assert.deepEqual(compact.lanes.map(lane => lane.territory), ['content'])
 })
 
 test('v2 scale fixtures preserve nouns and coordinates while bounding overview edges', () => {

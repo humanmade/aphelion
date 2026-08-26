@@ -482,7 +482,7 @@ svg { display: block; }
   <script type="module">
 import { createProjection, reduceEvent, summarizeEvent } from '/assets/reducer.mjs'
 import { buildReplayIndex, projectReplay } from '/assets/replay.mjs'
-import { buildSiteTopology, confirmationMatchLabel, displayChannel, FULL_FIT_PLACE_LIMIT, groupTopologyChanges, layoutSiteTopology, routeContainmentElbows, routeSiteTopologyEdges, siteCardHeight, topologyCameraFrames, topologyRunLabel, visibleTopologyEdges } from '/assets/topology.mjs'
+import { buildSiteTopology, confirmationMatchLabel, DEFAULT_DESKTOP_CONTENT_COLUMNS, desktopContentColumnsForTopology, displayChannel, FULL_FIT_PLACE_LIMIT, groupTopologyChanges, layoutSiteTopology, LEGACY_DESKTOP_CONTENT_COLUMNS, routeContainmentElbows, routeSiteTopologyEdges, siteCardHeight, topologyCameraFrames, topologyRunLabel, visibleTopologyEdges } from '/assets/topology.mjs'
 
 // Graph layout and node interaction substantially adapt sodiumsun/agenttrail (MIT, snapshot 41454d4).
 
@@ -491,6 +491,8 @@ const SVG_NS = 'http://www.w3.org/2000/svg'
 const STANDARD_TRANSITION_MS = 300
 const SLOW_TRANSITION_MS = 500
 const SETTLED_CAMERA_PLACE_CAPACITY = 12
+const SETTLED_CAMERA_CONTENT_COLUMNS = DEFAULT_DESKTOP_CONTENT_COLUMNS
+const DEFAULT_CAMERA_LEGIBILITY_FLOOR = .7
 const CAMERA_SCALE_STEP = 1.2
 const CAMERA_RUNWAY_PADDING = 56
 const COMPACT_CAMERA_COLUMN_WIDTH = 320 + CAMERA_RUNWAY_PADDING * 2
@@ -1116,14 +1118,14 @@ function updateCamera({ animate = false } = {}) {
   graph.cameraAnimationFrame = requestAnimationFrame(tick)
 }
 
-function settledCameraFrame({ compact, aspect, nodeW, nodeH, gapX, gapY, padX, padY }) {
+function settledCameraFrame({ compact, aspect, viewportWidth, contentColumns, nodeW, nodeH, gapX, gapY, padX, padY }) {
   if (compact) return {
     x: padX - CAMERA_RUNWAY_PADDING,
     y: padY - CAMERA_RUNWAY_PADDING,
     width: COMPACT_CAMERA_COLUMN_WIDTH,
     height: COMPACT_CAMERA_INITIAL_HEIGHT,
   }
-  const columns = 4
+  const columns = Math.max(1, contentColumns || SETTLED_CAMERA_CONTENT_COLUMNS)
   const rows = Math.ceil(SETTLED_CAMERA_PLACE_CAPACITY / columns)
   const x = padX - CAMERA_RUNWAY_PADDING
   const y = padY - CAMERA_RUNWAY_PADDING
@@ -1134,12 +1136,20 @@ function settledCameraFrame({ compact, aspect, nodeW, nodeH, gapX, gapY, padX, p
   let height = contentBottom + CAMERA_RUNWAY_PADDING - y
   if (width / height > aspect) height = width / aspect
   else width = height * aspect
+  if (columns === SETTLED_CAMERA_CONTENT_COLUMNS) {
+    const maximumLegibleWidth = viewportWidth / DEFAULT_CAMERA_LEGIBILITY_FLOOR
+    if (width > maximumLegibleWidth) {
+      width = maximumLegibleWidth
+      height = width / aspect
+    }
+  }
   return { x, y, width, height }
 }
 
-function quantizedCameraFrame(base, nodes, metrics, nodeW) {
-  const right = Math.max(base.x, ...nodes.map(item => item.x + nodeW)) + CAMERA_RUNWAY_PADDING
-  const bottom = Math.max(base.y, ...nodes.map(item => item.y + (metrics[item.id]?.h || 104))) + CAMERA_RUNWAY_PADDING
+function quantizedCameraFrame(base, nodes, metrics, nodeW, placeCount) {
+  const runway = placeCount > SETTLED_CAMERA_PLACE_CAPACITY ? CAMERA_RUNWAY_PADDING : 0
+  const right = Math.max(base.x, ...nodes.map(item => item.x + nodeW)) + runway
+  const bottom = Math.max(base.y, ...nodes.map(item => item.y + (metrics[item.id]?.h || 104))) + runway
   const requiredScale = Math.max(1, (right - base.x) / base.width, (bottom - base.y) / base.height)
   let step = state.cameraScaleStep
   while (CAMERA_SCALE_STEP ** step < requiredScale) step++
@@ -1461,6 +1471,7 @@ function renderComponents(model, topology = currentTopology(model)) {
   const planNodes = graphNodes.filter(item => item.group === 'plan')
   const siteNodes = graphNodes.filter(item => item.group === 'site')
   let layoutLanes = []
+  let layoutSeed = null
 
   const layoutPlan = items => {
     const columns = {}
@@ -1470,8 +1481,9 @@ function renderComponents(model, topology = currentTopology(model)) {
   layoutPlan(planNodes)
   if (siteNodes.length) {
     const layoutSessionId = model.session?.sessionId || model.daemon?.sessionId || state.sessionId || 'current'
-    if (!state.layoutSeeds.has(layoutSessionId)) state.layoutSeeds.set(layoutSessionId, { desktopWrapColumns: 4 })
-    const siteLayout = layoutSiteTopology(topology, { compact, nodeW, nodeH: layoutNodeH, nodeHeights: Object.fromEntries(Object.entries(metrics).map(([id, metric]) => [id, metric.h])), gapX, gapY, padX, padY, layoutSeed: state.layoutSeeds.get(layoutSessionId) })
+    if (!state.layoutSeeds.has(layoutSessionId)) state.layoutSeeds.set(layoutSessionId, { desktopWrapColumns: desktopContentColumnsForTopology(topology.topologyVersion) })
+    layoutSeed = state.layoutSeeds.get(layoutSessionId)
+    const siteLayout = layoutSiteTopology(topology, { compact, nodeW, nodeH: layoutNodeH, nodeHeights: Object.fromEntries(Object.entries(metrics).map(([id, metric]) => [id, metric.h])), gapX, gapY, padX, padY, layoutSeed })
     layoutLanes = siteLayout.lanes || []
     const positions = new Map(siteLayout.nodes.map(item => [item.id, item]))
     for (const item of siteNodes) {
@@ -1656,7 +1668,7 @@ function renderComponents(model, topology = currentTopology(model)) {
   let compactSentenceTarget = null
   if (!state.userMovedCamera) {
     const aspect = window.innerWidth / Math.max(1, window.innerHeight - 48)
-    const settled = settledCameraFrame({ compact, aspect, nodeW, nodeH: layoutNodeH, gapX, gapY, padX, padY })
+    const settled = settledCameraFrame({ compact, aspect, viewportWidth: flowWidth, contentColumns: layoutSeed?.desktopWrapColumns || LEGACY_DESKTOP_CONTENT_COLUMNS, nodeW, nodeH: layoutNodeH, gapX, gapY, padX, padY })
     if (compact) {
       const initializing = !state.camera
       const extended = extendedCompactCameraFrame(settled, displayedNodes, metrics)
@@ -1665,7 +1677,8 @@ function renderComponents(model, topology = currentTopology(model)) {
       state.cameraOverCeiling = cameraFrames.mode === 'sentence'
       if (initializing && state.cameraOverCeiling) compactSentenceTarget = cameraFrames.target?.id || null
     } else {
-      const quantized = quantizedCameraFrame(settled, displayedNodes, metrics, nodeW)
+      const placeCount = displayedNodes.filter(node => node.id !== 'wp:site').length
+      const quantized = quantizedCameraFrame(settled, displayedNodes, metrics, nodeW, placeCount)
       if (!state.camera) {
         state.cameraScaleStep = quantized.step
         state.cameraOverCeiling = cameraFrames.mode === 'sentence'

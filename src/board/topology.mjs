@@ -4,6 +4,12 @@ import { containmentFor, observedParentRelation, TERRITORY_LABELS, TERRITORY_ORD
 
 export const FULL_FIT_PLACE_LIMIT = 24
 export const OVERVIEW_IDLE_EDGE_LIMIT = 24
+export const DEFAULT_DESKTOP_CONTENT_COLUMNS = 3
+export const LEGACY_DESKTOP_CONTENT_COLUMNS = 4
+
+export function desktopContentColumnsForTopology(topologyVersion) {
+  return Number(topologyVersion) >= 3 ? DEFAULT_DESKTOP_CONTENT_COLUMNS : LEGACY_DESKTOP_CONTENT_COLUMNS
+}
 // DEC-010 provisional limit: a generic MCP claim may match an observed place only in this trail-time window.
 export const INFERRED_CONFIRMATION_WINDOW_MS = 30_000
 
@@ -952,9 +958,17 @@ export function buildSiteTopology(events, options = {}) {
   const blueprintRequestTargets = buildRequestTargets(blueprintEvents)
   const visibleRequestTargets = buildRequestTargets(visibleEvents)
   for (const event of visibleEvents) {
-    if (topologyEventClass(event) !== 'declared' || resolveTopologyEntity(event) || Array.isArray(event.data?.objectHintKeys)) continue
+    const classification = topologyEventClass(event)
     const id = requestId(event)
     const targets = blueprintRequestTargets.get(id)
+    // Presence may relight a place that already exists at the playhead using
+    // the request's later observed target. analyze() still refuses to create
+    // a place from presence alone, so future nouns remain future.
+    if (classification === 'presence') {
+      if (id && targets?.length) visibleRequestTargets.set(id, [...targets])
+      continue
+    }
+    if (classification !== 'declared' || resolveTopologyEntity(event) || Array.isArray(event.data?.objectHintKeys)) continue
     if (id && targets?.some(key => provisionalEntity(key, event))) visibleRequestTargets.set(id, [...targets])
   }
   const blueprint = analyze(blueprintEvents, blueprintRequestTargets, topologyVersion)
@@ -1162,7 +1176,7 @@ function layoutContainmentTopology(topology, options = {}) {
   const nodeH = options.nodeH ?? (compact ? 238 : 220)
   const gapX = options.gapX ?? (compact ? 38 : 112)
   const gapY = options.gapY ?? (compact ? 28 : 24)
-  const columns = compact ? 1 : Math.max(1, Number(options.layoutSeed?.desktopWrapColumns || 4))
+  const columns = compact ? 1 : Math.max(1, Number(options.layoutSeed?.desktopWrapColumns || desktopContentColumnsForTopology(topology.topologyVersion)))
   const nodeHeights = options.nodeHeights || {}
   const columnStep = nodeW + gapX
   const rowStep = nodeH + Math.max(gapY, 68)
@@ -1269,9 +1283,9 @@ export function layoutSiteTopology(topology, options = {}) {
   const gapY = options.gapY ?? (compact ? 28 : 40)
   const categoryOrder = options.categoryOrder || ['content', 'settings', 'abilities', 'interfaces', 'objects', 'plugins']
   const categoryRank = new Map(categoryOrder.map((category, index) => [category, index]))
-  // A session-stable logical seed, not viewport width, owns wrapping. Four
-  // 320px cards produce a balanced 4x5 block for the 20-place desktop case.
-  const desktopWrapColumns = Math.max(1, Number(options.layoutSeed?.desktopWrapColumns || 4))
+  // A session-stable logical seed, not viewport width or current place count,
+  // owns wrapping. Recorded projection versions retain their original seed.
+  const desktopWrapColumns = Math.max(1, Number(options.layoutSeed?.desktopWrapColumns || desktopContentColumnsForTopology(topology.topologyVersion)))
   const nodeHeights = options.nodeHeights || {}
   const placed = []
   const lanes = []

@@ -33,7 +33,7 @@ One JSON object per line (JSONL), UTF-8, flushed per write:
 | `data` | Kind-specific payload. Unknown fields must be preserved by readers. |
 | `prev` | Optional SHA-256 link to the previous serialized event. Absent in the plain-default mode. |
 
-First event of every file is `kind: "session.start"` with `data` carrying target (repo path or site URL), agent identity if known, Aphelion version, `topologyVersion`, and hostname. `topologyVersion` selects the recorded projection contract: missing or `1` remains v1 forever; sessions recorded for the containment model use `2`. Replay never upgrades a historical session from currently installed site state. Sessions end with `session.end` when observed; readers must tolerate its absence (crashes happen).
+First event of every file is `kind: "session.start"` with `data` carrying target (repo path or site URL), agent identity if known, Aphelion version, `topologyVersion`, and hostname. `topologyVersion` selects the recorded projection contract: missing or `1` remains v1 forever; containment sessions use `2`; sessions using the three-content-column legible opening use `3`. Replay never upgrades a historical session from currently installed site state. Sessions end with `session.end` when observed; readers must tolerate its absence (crashes happen).
 
 ## Rules
 

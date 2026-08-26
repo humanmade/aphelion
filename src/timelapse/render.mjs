@@ -3,7 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { readTrail } from '../trail/reader.mjs'
-import { buildSiteFrame, displayChannel, routeContainmentElbows, routeSiteTopologyEdges, topologyCameraFrames, visibleTopologyEdges } from '../board/topology.mjs'
+import { buildSiteFrame, desktopContentColumnsForTopology, displayChannel, routeContainmentElbows, routeSiteTopologyEdges, topologyCameraFrames, visibleTopologyEdges } from '../board/topology.mjs'
+import { recordedTopologyVersion } from '../trail/topology-version.mjs'
 
 function xml(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[character]))
@@ -43,7 +44,7 @@ export function renderFrameGeometry(events, cursor, options = {}) {
     gapY: compact ? 28 : 24,
     padX: compact ? 24 : 42,
     padY: compact ? 56 : 44,
-    layoutSeed: options.layoutSeed || { desktopWrapColumns: 4 },
+    layoutSeed: options.layoutSeed || { desktopWrapColumns: desktopContentColumnsForTopology(recordedTopologyVersion(events)) },
   }
   const frame = buildSiteFrame(visibleEvents, layoutOptions)
   const nodes = frame.layout.nodes.map(node => ({

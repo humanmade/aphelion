@@ -70,6 +70,8 @@ files: [src/board/**]
   from: DEC-010
 - [x] Anchor the default camera to assumed growth and quantize scale changes beyond its initial capacity {#board-camera-runway}
   from: movement doctrine
+- [x] Seed new desktop sessions at three content columns for a legible settled opening {#board-camera-legibility}
+  from: principles 5 and 6
 - [x] Glide reversible tombstone compaction without replacing its durable place {#board-tombstone-motion}
   from: motion eval
 - [x] Infer bare-name MCP confirmations only against one unambiguous existing place {#board-mcp-name-inference}
@@ -88,6 +90,8 @@ files: [src/replay/**]
   from: post-0.1 QA
 - [x] Preserve evidence-row identity across ticks and overlap replay landings with eased transitions {#replay-continuity}
   from: motion eval
+- [x] Relight brief observed-only presence on existing places without revealing future nouns {#replay-presence-motion}
+  from: playback regression
 
 ## Render the timelapse {#timelapse}
 tech: render trail projection to video, re-renderable after the fact

@@ -1,4 +1,4 @@
-export const CURRENT_TOPOLOGY_VERSION = 2
+export const CURRENT_TOPOLOGY_VERSION = 3
 
 export function normalizeTopologyVersion(value) {
   const version = Number(value)

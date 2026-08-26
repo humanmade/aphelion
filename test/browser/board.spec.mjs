@@ -15,6 +15,7 @@ const qaHRoot = path.resolve('qa-artifacts/2026-08-25/work-order-h')
 const qaIRoot = path.resolve('qa-artifacts/2026-08-25/work-order-i')
 const qaJRoot = path.resolve('qa-artifacts/2026-08-25/work-order-j')
 const qaKRoot = path.resolve('qa-artifacts/2026-08-26/work-order-k')
+const DEFAULT_CAMERA_LEGIBILITY_FLOOR = .7
 const qaScreenshot = async (page, testInfo, name) => {
   fs.mkdirSync(qaRoot, { recursive: true })
   await page.screenshot({ path: path.join(qaRoot, `${name}-${testInfo.project.name}.png`) })
@@ -366,21 +367,24 @@ test('the default camera holds one top-left anchored scale through its first twe
     const camera = page.locator('.work-graph')
     const settledViewBox = await camera.getAttribute('viewBox')
     const compact = testInfo.project.name === 'mobile'
-    const readCompactCamera = () => camera.evaluate(svg => ({
+    const readCamera = () => camera.evaluate(svg => ({
       x: svg.viewBox.baseVal.x,
       y: svg.viewBox.baseVal.y,
       width: svg.viewBox.baseVal.width,
       height: svg.viewBox.baseVal.height,
       scale: svg.getBoundingClientRect().width / svg.viewBox.baseVal.width,
     }))
-    const settledCompactCamera = compact ? await readCompactCamera() : null
+    const settledCamera = await readCamera()
+    expect(settledCamera.scale).toBeGreaterThanOrEqual(DEFAULT_CAMERA_LEGIBILITY_FLOOR)
+    expect(settledCamera.scale).toBeLessThanOrEqual(1)
+    const settledCompactCamera = compact ? settledCamera : null
     let compactHeight = settledCompactCamera?.height
     let firstPosition = null
     for (let index = 1; index <= 12; index++) {
       await ingest({ source: 'wp', kind: 'wp.post.updated', data: { requestId: `runway-${index}`, objectType: 'post', objectId: index, postType: 'page', title: `Runway page ${index}`, status: 'publish', channel: 'wp-cli' } })
       await expect(page.locator('.graph-node.entity')).toHaveCount(index)
       if (compact) {
-        const current = await readCompactCamera()
+        const current = await readCamera()
         expect(current.x).toBe(settledCompactCamera.x)
         expect(current.y).toBe(settledCompactCamera.y)
         expect(current.width).toBe(settledCompactCamera.width)
@@ -395,7 +399,7 @@ test('the default camera holds one top-left anchored scale through its first twe
 
     await page.getByRole('tab', { name: 'Replay' }).click()
     if (compact) {
-      const replay = await readCompactCamera()
+      const replay = await readCamera()
       expect(replay.width).toBe(settledCompactCamera.width)
       expect(replay.scale).toBe(settledCompactCamera.scale)
       expect(replay.height).toBeGreaterThanOrEqual(compactHeight)
@@ -472,6 +476,37 @@ test('paused replay freezes ambient graph motion', async ({ page }) => {
   expect(await page.locator('.graph-edge.claimed').evaluate(element => getComputedStyle(element).animationPlayState)).toBe('paused')
   expect(await place.locator('.place-dot').evaluate(element => getComputedStyle(element).animationPlayState)).toBe('paused')
   expect(await page.locator('.work-graph').evaluate(element => element.animationsPaused())).toBe(true)
+})
+
+test('playing replay renders brief observed-only presence as live energy', async ({ page }) => {
+  const trailRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-brief-presence-'))
+  const siteDaemon = await startDaemon({ target: 'http://localhost:8081', targetType: 'site', trailDirectory: path.join(trailRoot, 'trails'), port: 6490, watch: false })
+  try {
+    const startedAt = Date.now()
+    const seed = siteDaemon.emit('wp', 'wp.option.updated', { requestId: 'brief-seed', objectType: 'option', name: 'blogdescription', channel: 'mcp', transport: 'stdio' }, { ts: startedAt })
+    siteDaemon.emit('wp', 'presence.open', { requestId: 'brief-observed', connectionId: 'brief-observed', actor: 'QA connector', channel: 'mcp', transport: 'stdio' }, { ts: startedAt + 20 })
+    siteDaemon.emit('wp', 'wp.option.updated', { requestId: 'brief-observed', objectType: 'option', name: 'blogdescription', channel: 'mcp', transport: 'stdio' }, { ts: startedAt + 40 })
+    siteDaemon.emit('wp', 'presence.close', { requestId: 'brief-observed', connectionId: 'brief-observed', actor: 'QA connector', channel: 'mcp', transport: 'stdio' }, { ts: startedAt + 60 })
+
+    await page.goto(`${siteDaemon.url}/?session=${encodeURIComponent(siteDaemon.sessionId)}&mode=replay&seq=${seed.seq}`)
+    await page.locator('.work-graph').evaluate(graph => {
+      window.__aphelionSawBriefEnergy = false
+      const inspect = () => {
+        const playing = document.querySelector('.app-shell')?.dataset.playing === 'true'
+        const edge = graph.querySelector('.graph-edge.claimed, .graph-edge.live')
+        const particle = graph.querySelector('.energy-particle')
+        if (playing && edge && particle) window.__aphelionSawBriefEnergy = true
+      }
+      new MutationObserver(inspect).observe(graph, { attributes: true, childList: true, subtree: true })
+      inspect()
+    })
+
+    await page.getByRole('button', { name: 'Play trail' }).click()
+    await expect.poll(() => page.evaluate(() => window.__aphelionSawBriefEnergy)).toBe(true)
+  } finally {
+    await siteDaemon.close('brief-presence-test')
+    fs.rmSync(trailRoot, { recursive: true, force: true })
+  }
 })
 
 test('replay exposes its position and timelapse starts without pressing play', async ({ page }) => {
@@ -636,7 +671,10 @@ test('twenty places occupy stable category lanes with one resting channel label'
       columns: new Set(nodes.map(node => node.getAttribute('transform').match(/translate\(([-\d.]+)/)?.[1])).size,
       rows: new Set(nodes.map(node => node.getAttribute('transform').match(/\s([-\d.]+)\)/)?.[1])).size,
     }))
-    expect(gridShape).toEqual(page.viewportSize().width <= 680 ? { columns: 1, rows: 20 } : { columns: 5, rows: 5 })
+    // Work Order E seeds wrapping from the recorded projection version, not
+    // viewport or first-render count. This 18-place first render therefore
+    // keeps the current three-content-column seed when places 19–20 arrive.
+    expect(gridShape).toEqual(page.viewportSize().width <= 680 ? { columns: 1, rows: 20 } : { columns: 4, rows: 6 })
     await expect(page.locator('.graph-edge-label:not([hidden])')).toHaveCount(1)
     await expect(page.locator('.graph-edge-label:not([hidden])')).toHaveText('WP-CLI')
     if (page.viewportSize().width > 680) {
@@ -1033,8 +1071,10 @@ test('twenty content places form an append-stable balanced block', async ({ page
         const matrix = node.transform.baseVal.consolidate().matrix
         return { x: matrix.e, y: matrix.f }
       }))
-      expect(new Set(positions.map(item => item.x)).size).toBe(5)
-      expect(new Set(positions.map(item => item.y)).size).toBe(5)
+      // A dense initial ingest does not widen the session seed: root plus
+      // three content columns turns the 20-place block downward into six rows.
+      expect(new Set(positions.map(item => item.x)).size).toBe(4)
+      expect(new Set(positions.map(item => item.y)).size).toBe(6)
     }
     await page.getByRole('tab', { name: 'Replay' }).click()
     const replay = await page.locator('.graph-node').evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.dataset.nodeId, node.getAttribute('transform')])))
