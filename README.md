@@ -8,7 +8,7 @@
 [![license](https://img.shields.io/github/license/humanmade/aphelion.svg)](./LICENSE)
 [![Socket Badge](https://socket.dev/api/badge/npm/package/aphelion)](https://socket.dev/npm/package/aphelion)
 
-![A recorded agent session replayed on the Aphelion board: the site, its content, structure, plugin, and settings territories, with a page rename landing live](assets/aphelion-board.jpg)
+![A recorded agent session in the Aphelion timelapse: the site and its content, structure, plugin, and settings territories, with a WP-CLI change landing live on a plugin setting](assets/aphelion-board.jpg)
 
 An agent says it updated a page. The filesystem shows a diff. WordPress reports a save.
 Aphelion records those fragments as one append-only local trail and renders the same record
