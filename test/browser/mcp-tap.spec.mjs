@@ -49,8 +49,8 @@ test('MCP tap shows its live actor flow, inferred confirmation evidence, and ses
     element.dispatchEvent(new Event('input', { bubbles: true }))
   }, beforeEnd)
 
-  await expect(page.locator('.graph-edge-label')).toContainText('MCP · Tap agent')
-  await expect(page.locator('[data-node-id="wp:option:blogname"] .change-flag')).toHaveText('in-flight')
+  await expect(page.locator('.graph-edge-label.active')).toContainText('MCP · Tap agent')
+  await expect(page.locator('[data-node-id="wp:option:blogname"] .change-flag')).toHaveText('awaiting')
   await page.locator('[data-node-id="wp:option:blogdescription"]').click()
   await expect(page.locator('#place-panel')).toContainText('Matched by object and time, not request ID')
 
