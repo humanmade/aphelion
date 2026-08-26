@@ -74,6 +74,8 @@ files: [src/board/**]
   from: motion eval
 - [x] Infer bare-name MCP confirmations only against one unambiguous existing place {#board-mcp-name-inference}
   from: DEC-010
+- [x] Let owners switch the live and replay board between dark instrument and neutral paper registers {#board-light-mode}
+  from: work order Q
 
 ## Replay any session {#replay}
 tech: scrub UI over trail; sparse snapshot index for seeking
@@ -95,6 +97,8 @@ files: [src/timelapse/**]
   from: roadmap
 - [x] Render exported frames from the same topology and geometry as the browser board {#timelapse-parity}
   from: containment model
+- [ ] Give exported timelapses their own light register after an export-specific visual contract is defined {#timelapse-light-register}
+  from: work order Q (scoped out)
 
 ## Ship it {#ship}
 tech: npm package "aphelion" (name free as of 2026-08-25), npx-first

@@ -3,8 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#090909">
+  <script>
+    (() => {
+      let theme = null
+      try { theme = window.localStorage.getItem('aphelion-theme') } catch {}
+      if (theme !== 'light' && theme !== 'dark') theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+      document.documentElement.dataset.theme = theme
+    })()
+  </script>
   <title>Aphelion — WordPress agent trail</title>
   <style>
 /* Vendored Geist (OFL — see fonts/OFL-LICENSE.txt). Inlined as data URIs at build time. */
@@ -31,6 +39,15 @@
   --attention: oklch(78% 0.15 76);
   --danger: oklch(68% 0.19 27);
   --danger-soft: oklch(20% 0.055 27);
+  --grid-dot: oklch(28% 0 0 / .42);
+  --state-filter-shadow: 0 0 7px color-mix(in oklch, var(--live) 34%, transparent);
+  --declared-soft-shadow: 0 0 20px color-mix(in oklch, var(--declared) 10%, transparent);
+  --live-card-shadow: 0 0 24px color-mix(in oklch, var(--live) 24%, transparent);
+  --live-marker-shadow: 0 0 14px color-mix(in oklch, var(--live) 55%, transparent);
+  --status-shadow-near: 0 0 6px color-mix(in oklch, var(--live) 35%, transparent);
+  --status-shadow-far: 0 0 16px transparent;
+  --elevation-shadow: 0 8px 24px rgb(0 0 0 / .24);
+  --inspector-shadow: -18px 0 46px rgb(0 0 0 / .34);
   --font: "Geist", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --mono: "Geist Mono", ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --chrome: 48px;
@@ -43,6 +60,36 @@
   font-family: var(--font);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: oklch(97% 0 0);
+  --canvas: oklch(94% 0 0);
+  --surface: oklch(100% 0 0);
+  --surface-raised: oklch(98% 0 0);
+  --band: oklch(92% 0 0);
+  --text: oklch(20% 0 0);
+  --text-2: oklch(42% 0 0);
+  --text-3: oklch(54% 0 0);
+  --border: oklch(82% 0 0);
+  --border-strong: oklch(66% 0 0);
+  --declared: oklch(49% 0.16 252);
+  --declared-soft: oklch(94% 0.04 252);
+  --live: oklch(48% 0.11 154);
+  --live-soft: oklch(94% 0.035 154);
+  --attention: oklch(52% 0.12 76);
+  --danger: oklch(49% 0.17 27);
+  --danger-soft: oklch(94% 0.04 27);
+  --grid-dot: oklch(58% 0 0 / .3);
+  --state-filter-shadow: 0 3px 6px color-mix(in oklch, var(--live) 24%, transparent);
+  --declared-soft-shadow: 0 4px 12px color-mix(in oklch, var(--declared) 14%, transparent);
+  --live-card-shadow: 0 5px 16px color-mix(in oklch, var(--live) 19%, transparent);
+  --live-marker-shadow: 0 3px 7px color-mix(in oklch, var(--live) 36%, transparent);
+  --status-shadow-near: 0 2px 5px color-mix(in oklch, var(--live) 30%, transparent);
+  --status-shadow-far: 0 5px 12px transparent;
+  --elevation-shadow: 0 8px 24px rgb(0 0 0 / .12);
+  --inspector-shadow: -18px 0 46px rgb(0 0 0 / .16);
 }
 
 * { box-sizing: border-box; }
@@ -63,6 +110,7 @@ svg { display: block; }
 .app-shell { width: 100%; height: 100dvh; min-height: 0; overflow: hidden; display: grid; grid-template-rows: var(--chrome) minmax(0, 1fr); background: var(--bg); }
 .chrome-bar { position: relative; z-index: 30; display: grid; grid-template-columns: auto minmax(148px, 210px) auto minmax(420px, 1fr) auto; align-items: center; gap: 10px; height: var(--chrome); padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--band); }
 .brand { display: flex; align-items: center; gap: 8px; min-width: 102px; color: var(--text-2); }
+.brand-identity { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .brand-mark { width: 24px; height: 24px; overflow: visible; }
 /* Accelerate triangle ⇄ orb: each dot holds the triangle, glides to its orb
    position, holds, and returns. Positions live per-dot in --t and --o. */
@@ -105,6 +153,9 @@ svg { display: block; }
 }
 @media (prefers-reduced-motion: reduce) { .brand-mark .bm, .brand-mark .bm .bd { animation: none !important; } }
 .brand-word { font-family: "Geist Pixel", var(--mono, ui-monospace, monospace); font-size: 15px; font-weight: 400; letter-spacing: .02em; color: var(--text); }
+.theme-toggle { width: 28px; height: 28px; display: grid; place-items: center; flex: 0 0 auto; padding: 0; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text-2); cursor: pointer; transition: color 150ms var(--ease), border-color 150ms var(--ease), background 150ms var(--ease); }
+.theme-toggle:hover { border-color: var(--border-strong); background: var(--surface-raised); color: var(--text); }
+.theme-toggle svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
 .session-control { min-width: 0; }
 .session-control select { width: 100%; height: 30px; appearance: none; padding: 0 28px 0 10px; overflow: hidden; text-overflow: ellipsis; border: 1px solid var(--border); border-radius: 6px; background-color: var(--surface); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='m6 8 4 4 4-4' fill='none' stroke='%23979797' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 7px center; background-size: 16px; color: var(--text-2); font: 12px/1 var(--mono); cursor: pointer; }
@@ -132,12 +183,12 @@ svg { display: block; }
 
 .live-signal { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text-2); font: 11.5px/1 var(--mono); white-space: nowrap; }
 .live-signal i { width: 7px; height: 7px; border-radius: 50%; background: var(--attention); }
-.live-signal[data-status="live"] i { background: var(--live); box-shadow: 0 0 12px color-mix(in oklch, var(--live) 42%, transparent); animation: status-pulse 2.4s var(--ease) infinite; }
+.live-signal[data-status="live"] i { background: var(--live); box-shadow: var(--live-marker-shadow); animation: status-pulse 2.4s var(--ease) infinite; }
 .live-signal[data-status="replay"] i { background: var(--declared); }
 .live-signal[data-status="offline"] i { background: var(--danger); }
-@keyframes status-pulse { 0%, 42% { box-shadow: 0 0 6px color-mix(in oklch, var(--live) 35%, transparent); } 78%, 100% { box-shadow: 0 0 16px transparent; } }
+@keyframes status-pulse { 0%, 42% { box-shadow: var(--status-shadow-near); } 78%, 100% { box-shadow: var(--status-shadow-far); } }
 
-.observer-warning { position: fixed; z-index: 35; top: calc(var(--chrome) + 10px); right: 12px; display: flex; align-items: baseline; gap: 8px; max-width: min(440px, calc(100vw - 24px)); padding: 8px 11px; border: 1px solid color-mix(in oklch, var(--attention) 46%, var(--border)); border-radius: 7px; background: color-mix(in oklch, var(--surface-raised) 92%, var(--attention)); color: var(--text-2); font-size: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, .24); }
+.observer-warning { position: fixed; z-index: 35; top: calc(var(--chrome) + 10px); right: 12px; display: flex; align-items: baseline; gap: 8px; max-width: min(440px, calc(100vw - 24px)); padding: 8px 11px; border: 1px solid color-mix(in oklch, var(--attention) 46%, var(--border)); border-radius: 7px; background: color-mix(in oklch, var(--surface-raised) 92%, var(--attention)); color: var(--text-2); font-size: 12px; box-shadow: var(--elevation-shadow); }
 .observer-warning strong { color: var(--attention); font-weight: 650; white-space: nowrap; }
 .observer-warning span { min-width: 0; }
 
@@ -148,7 +199,7 @@ svg { display: block; }
 .work-graph { position: absolute; inset: 0; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: visible; touch-action: none; cursor: grab; }
 .graph-shell.compact .work-graph { width: 100vw; height: auto; min-height: 100%; aspect-ratio: var(--compact-camera-aspect); touch-action: pan-y; }
 .work-graph:active { cursor: grabbing; }
-.graph-grid-dot { fill: oklch(28% 0 0 / .42); }
+.graph-grid-dot { fill: var(--grid-dot); }
 .graph-grid-fill { fill: url(#graph-grid); }
 .graph-world { transform-box: fill-box; transform-origin: top left; }
 .graph-lane rect { fill: color-mix(in oklch, var(--surface) 20%, transparent); stroke: color-mix(in oklch, var(--border) 62%, transparent); stroke-width: 1; stroke-dasharray: 2 7; vector-effect: non-scaling-stroke; transition: fill 300ms var(--ease); }
@@ -166,7 +217,7 @@ svg { display: block; }
 .graph-edge.link { stroke-dasharray: 4 5; }
 .graph-edge.future { opacity: 0; }
 .graph-edge.claimed { stroke: var(--declared); stroke-dasharray: 2 7; animation: edge-travel var(--flow-duration, 1200ms) linear infinite; }
-.graph-edge.live, .graph-edge.active { stroke: var(--live); filter: drop-shadow(0 0 7px color-mix(in oklch, var(--live) 34%, transparent)); }
+.graph-edge.live, .graph-edge.active { stroke: var(--live); filter: drop-shadow(var(--state-filter-shadow)); }
 .graph-edge.settled { stroke: color-mix(in oklch, var(--live) 46%, var(--border-strong)); }
 .graph-edge-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
 @keyframes edge-travel { to { stroke-dashoffset: -18; } }
@@ -174,13 +225,13 @@ svg { display: block; }
 .graph-edge-label { fill: var(--text-3); font: 500 12px/1 var(--mono); letter-spacing: .03em; }
 .graph-edge-label[hidden] { display: none; }
 .graph-edge-label.active { fill: var(--live); }
-.energy-particle { fill: var(--live); filter: drop-shadow(0 0 7px var(--live)); }
+.energy-particle { fill: var(--live); filter: drop-shadow(var(--state-filter-shadow)); }
 
 .graph-node { cursor: pointer; transition: opacity var(--motion-slow) var(--ease); }
 .graph-node.future { opacity: 0; pointer-events: none; }
 .graph-node.filtered { display: none; }
 .graph-node.provisional { opacity: .68; }
-.graph-node.provisional .place-card { border-color: color-mix(in oklch, var(--declared) 55%, var(--border)); border-style: dashed; background: color-mix(in oklch, var(--surface) 82%, transparent); box-shadow: 0 0 20px color-mix(in oklch, var(--declared) 10%, transparent); }
+.graph-node.provisional .place-card { border-color: color-mix(in oklch, var(--declared) 55%, var(--border)); border-style: dashed; background: color-mix(in oklch, var(--surface) 82%, transparent); box-shadow: var(--declared-soft-shadow); }
 .graph-node.unconfirmed { opacity: .72; }
 .graph-node.unconfirmed .place-card { border-color: var(--border-strong); border-style: dashed; box-shadow: none; }
 /* Birth must scale in place: a CSS transform on the positioned <g> would override its
@@ -194,7 +245,7 @@ svg { display: block; }
 .place-card { width: 100%; height: 100%; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); transition: height var(--motion-slow) var(--ease-out), border-color var(--motion-slow) var(--ease), box-shadow var(--motion-slow) var(--ease), opacity var(--motion-slow) var(--ease); }
 .graph-node:hover .place-card, .graph-node:focus-visible .place-card, .graph-node.selected .place-card { border-color: var(--border-strong); }
 .graph-node.claimed .place-card, .graph-node.active .place-card { border-color: color-mix(in oklch, var(--declared) 35%, var(--border)); }
-.graph-node.live .place-card { border-color: color-mix(in oklch, var(--live) 40%, var(--border)); box-shadow: 0 0 24px color-mix(in oklch, var(--live) 24%, transparent); }
+.graph-node.live .place-card { border-color: color-mix(in oklch, var(--live) 40%, var(--border)); box-shadow: var(--live-card-shadow); }
 .graph-node.cooled .place-name, .graph-node.cooled .place-type { color: var(--text-2); }
 .place-band { height: 30px; display: grid; grid-template-columns: 14px auto minmax(0, 1fr) 7px; align-items: center; gap: 7px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--band); }
 .place-icon { width: 14px; height: 14px; fill: none; stroke: var(--text-2); stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
@@ -202,7 +253,7 @@ svg { display: block; }
 .place-address { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font: 12px/1 var(--mono); text-align: right; }
 .place-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); transition: background var(--motion-slow) var(--ease), box-shadow var(--motion-slow) var(--ease); }
 .graph-node.claimed .place-dot, .graph-node.active .place-dot { background: var(--declared); animation: declared-pulse 1.6s var(--ease) infinite; }
-.graph-node.live .place-dot { background: var(--live); box-shadow: 0 0 14px color-mix(in oklch, var(--live) 55%, transparent); }
+.graph-node.live .place-dot { background: var(--live); box-shadow: var(--live-marker-shadow); }
 @keyframes declared-pulse { 50% { box-shadow: 0 0 0 5px transparent; } 0%, 100% { box-shadow: 0 0 0 1px color-mix(in oklch, var(--declared) 42%, transparent); } }
 .app-shell:not([data-mode="live"])[data-playing="false"] .graph-edge.claimed,
 .app-shell:not([data-mode="live"])[data-playing="false"] .graph-node.claimed .place-dot,
@@ -239,7 +290,7 @@ svg { display: block; }
 .tail-more:hover { color: var(--text-2); background: var(--surface-raised); }
 .change-tail[data-expanded="true"] { max-height: 244px; overflow-y: auto; scrollbar-gutter: stable; }
 .graph-port { fill: var(--canvas); stroke: var(--border-strong); stroke-width: 1.5; vector-effect: non-scaling-stroke; transition: stroke var(--motion-slow) var(--ease), fill var(--motion-slow) var(--ease), filter var(--motion-slow) var(--ease); }
-.graph-port.live { fill: var(--live); stroke: var(--live); filter: drop-shadow(0 0 7px var(--live)); }
+.graph-port.live { fill: var(--live); stroke: var(--live); filter: drop-shadow(var(--state-filter-shadow)); }
 
 .graph-controls { position: absolute; left: 12px; bottom: 12px; z-index: 4; display: flex; align-items: center; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--band); }
 .graph-control { width: 30px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--text-2); cursor: pointer; }
@@ -257,7 +308,7 @@ svg { display: block; }
 .empty-board p + p { margin-top: 4px; color: var(--text-3); }
 
 .inspector-scrim { position: fixed; z-index: 38; inset: var(--chrome) 0 0; display: none; border: 0; background: transparent; }
-.inspector { position: fixed; z-index: 40; top: var(--chrome); right: 0; bottom: 0; width: min(420px, 92vw); display: grid; grid-template-rows: auto auto minmax(0, 1fr); border-left: 1px solid var(--border); background: var(--surface); box-shadow: -18px 0 46px rgba(0, 0, 0, .34); transform: translateX(102%); visibility: hidden; transition: transform 300ms var(--ease-out), visibility 0s linear 300ms; }
+.inspector { position: fixed; z-index: 40; top: var(--chrome); right: 0; bottom: 0; width: min(420px, 92vw); display: grid; grid-template-rows: auto auto minmax(0, 1fr); border-left: 1px solid var(--border); background: var(--surface); box-shadow: var(--inspector-shadow); transform: translateX(102%); visibility: hidden; transition: transform 300ms var(--ease-out), visibility 0s linear 300ms; }
 .app-shell[data-inspector-open="true"] .inspector { visibility: visible; transform: translateX(0); transition-delay: 0s; }
 .app-shell[data-inspector-open="true"] .inspector-scrim { display: block; }
 .inspector-header { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px 10px 18px; border-bottom: 1px solid var(--border); }
@@ -337,9 +388,10 @@ svg { display: block; }
   <a class="skip-link" href="#map">Skip to map</a>
   <div class="app-shell" data-app-state="loading" data-mode="live" data-inspector-open="false">
     <header class="chrome-bar" aria-label="Trail controls">
-      <div class="brand" aria-label="Aphelion">
-        <!-- Accelerate triangle mark decomposed into dots, morphing to an orb and back on loop -->
-        <svg class="brand-mark" viewBox="0 0 25 25" aria-hidden="true">
+      <div class="brand">
+        <div class="brand-identity" role="img" aria-label="Aphelion">
+          <!-- Accelerate triangle mark decomposed into dots, morphing to an orb and back on loop -->
+          <svg class="brand-mark" viewBox="0 0 25 25" aria-hidden="true">
           <g class="bm" style="--t:translate(2.5px,20.5px);--o:translate(15.3px,12.5px) scale(1.18);--oo:.98"><circle class="bd" r="1"/></g>
           <g class="bm" style="--t:translate(5.8px,20.5px);--o:translate(9.0px,15.7px) scale(1.14);--oo:.94"><circle class="bd" r="1"/></g>
           <g class="bm" style="--t:translate(9.2px,20.5px);--o:translate(13.0px,6.6px) scale(1.10);--oo:.90"><circle class="bd" r="1"/></g>
@@ -358,8 +410,13 @@ svg { display: block; }
           <g class="bm" style="--t:translate(10.0px,12.6px);--o:translate(11.7px,6.6px) scale(0.55);--oo:.40"><circle class="bd" r="1"/></g>
           <g class="bm" style="--t:translate(7.5px,15.2px);--o:translate(16.1px,15.6px) scale(0.51);--oo:.36"><circle class="bd" r="1"/></g>
           <g class="bm" style="--t:translate(5.0px,17.9px);--o:translate(9.7px,12.6px) scale(0.47);--oo:.32"><circle class="bd" r="1"/></g>
-        </svg>
-        <span class="brand-word">aphelion</span>
+          </svg>
+          <span class="brand-word">aphelion</span>
+        </div>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+          <svg id="theme-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+          <svg id="theme-moon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M20 15.2A8.5 8.5 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z"/></svg>
+        </button>
       </div>
 
       <label class="session-control">
@@ -438,6 +495,7 @@ const CAMERA_SCALE_STEP = 1.2
 const CAMERA_RUNWAY_PADDING = 56
 const COMPACT_CAMERA_COLUMN_WIDTH = 320 + CAMERA_RUNWAY_PADDING * 2
 const COMPACT_CAMERA_INITIAL_HEIGHT = 720
+const THEME_STORAGE_KEY = 'aphelion-theme'
 const state = {
   mode: 'live',
   liveModel: createProjection(),
@@ -473,6 +531,33 @@ const state = {
 }
 
 const deepLinkKeys = ['session', 'mode', 'seq', 'place', 'flow', 'tab']
+
+function storedTheme() {
+  try {
+    const theme = window.localStorage.getItem(THEME_STORAGE_KEY)
+    return theme === 'light' || theme === 'dark' ? theme : null
+  } catch {
+    return null
+  }
+}
+
+function systemTheme() {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+function applyTheme(theme, { persist = false } = {}) {
+  const resolvedTheme = theme === 'dark' ? 'dark' : 'light'
+  document.documentElement.dataset.theme = resolvedTheme
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', resolvedTheme === 'dark' ? '#090909' : '#f7f7f7')
+  $('theme-toggle').setAttribute('aria-label', `Switch to ${resolvedTheme === 'dark' ? 'light' : 'dark'} theme`)
+  $('theme-toggle').setAttribute('title', `Switch to ${resolvedTheme === 'dark' ? 'light' : 'dark'} theme`)
+  $('theme-toggle').setAttribute('aria-pressed', String(resolvedTheme === 'dark'))
+  $('theme-sun').hidden = resolvedTheme !== 'light'
+  $('theme-moon').hidden = resolvedTheme !== 'dark'
+  if (persist) {
+    try { window.localStorage.setItem(THEME_STORAGE_KEY, resolvedTheme) } catch {}
+  }
+}
 
 function node(tag, className, text) {
   const element = document.createElement(tag)
@@ -2001,6 +2086,12 @@ for (const button of document.querySelectorAll('.mode-switch button[data-mode]')
   event.stopPropagation()
   setMode(button.dataset.mode)
 })
+$('theme-toggle').addEventListener('click', () => {
+  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark', { persist: true })
+})
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  if (!storedTheme()) applyTheme(systemTheme())
+})
 for (const button of document.querySelectorAll('[data-inspector-tab]')) button.addEventListener('click', event => {
   event.preventDefault()
   event.stopPropagation()
@@ -2025,6 +2116,7 @@ document.addEventListener('keydown', event => {
   if (event.key === ' ' && state.mode !== 'live' && event.target === document.body) { event.preventDefault(); togglePlayback() }
 })
 
+applyTheme(storedTheme() || systemTheme())
 loadLive().then(applyDeepLink).then(connectEvents).catch(error => {
   document.querySelector('.app-shell').dataset.appState = 'error'
   const empty = node('div', 'empty-board')
