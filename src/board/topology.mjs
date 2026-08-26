@@ -822,6 +822,7 @@ function serializeEntity(entity, order, visibility, edges, seen = true, sessionE
   } : {}
   const changes = seen ? changeRecords(entity.history, sessionEnded) : []
   const latestChange = changes.at(-1) || null
+  const stateChangeId = [...changes].reverse().find(change => change.confirmation && !change.state?.memberDetail)?.id || null
   if (visibility === 'blueprint-future') return {
     id: entity.key,
     ...containment,
@@ -836,6 +837,7 @@ function serializeEntity(entity, order, visibility, edges, seen = true, sessionE
     history: seen ? entity.history : [],
     changes,
     stateLine: placeState(entity, changes),
+    stateChangeId,
     lastChange: latestChange,
     properties: [],
     channels: [],
@@ -866,6 +868,7 @@ function serializeEntity(entity, order, visibility, edges, seen = true, sessionE
     history: entity.history,
     changes,
     stateLine: placeState(entity, changes),
+    stateChangeId,
     lastChange: latestChange,
     properties: [...entity.properties.values()],
     channels: [...entity.channels],
@@ -995,6 +998,7 @@ export function buildSiteTopology(events, options = {}) {
       systemEvidence,
       changes: allChanges,
       stateLine: `${visibleNodes.length} ${visibleNodes.length === 1 ? 'place' : 'places'} touched${rootFlow ? ` · ${displayChannel(rootFlow.channel)} ${rootFlow.connected ? 'live' : rootFlow.active ? 'in flight' : 'idle'}` : ''}`,
+      stateChangeId: allChanges.at(-1)?.id || (visibleEvents.at(-1)?.seq !== undefined ? `event:${visibleEvents.at(-1).seq}` : null),
       lastChange: allChanges.at(-1) || null,
       properties: [],
     },

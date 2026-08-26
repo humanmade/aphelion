@@ -7,6 +7,9 @@ import { renderFrameGeometry } from '../../src/timelapse/render.mjs'
 
 let daemon
 let root
+let motionDaemon
+let motionRoot
+let motionMoments
 const qaRoot = path.resolve('qa-artifacts/2026-08-25/work-order-g')
 const qaHRoot = path.resolve('qa-artifacts/2026-08-25/work-order-h')
 const qaIRoot = path.resolve('qa-artifacts/2026-08-25/work-order-i')
@@ -69,10 +72,20 @@ test.beforeAll(async () => {
     { source: 'wp', kind: 'wp.post_meta.updated', data: { summary: 'metadata updated', requestId: 'qa-seo', objectType: 'post-meta', objectId: 42, metaKey: '_yoast_wpseo_focuskw', plugin: 'yoast-seo', channel: 'wp-cli', transport: 'process' } },
   )
   for (const event of events) await fetch(`${daemon.url}/ingest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(event) })
+
+  motionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-motion-'))
+  motionDaemon = await startDaemon({ target: 'http://localhost:8081', targetType: 'site', trailDirectory: path.join(motionRoot, 'trails'), port: 6460, watch: false })
+  const startedAt = Date.now()
+  motionMoments = {
+    claim: motionDaemon.emit('agent', 'agent.action.declared', { summary: 'Update motion setting', requestId: 'motion-update', objectType: 'option', name: 'motion_setting', channel: 'wp-cli', transport: 'process' }, { ts: startedAt }),
+    confirmation: motionDaemon.emit('wp', 'wp.option.updated', { summary: 'Motion setting updated', requestId: 'motion-update', objectType: 'option', name: 'motion_setting', channel: 'wp-cli', transport: 'process' }, { ts: startedAt + 800 }),
+  }
 })
 
 test.afterAll(async () => {
+  await motionDaemon?.close('browser-test')
   await daemon?.close('browser-test')
+  if (motionRoot) fs.rmSync(motionRoot, { recursive: true, force: true })
   fs.rmSync(root, { recursive: true, force: true })
 })
 
@@ -291,6 +304,74 @@ test('keyed rendering preserves card identity and a user-moved camera across liv
   await fetch(`${daemon.url}/ingest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source: 'wp', kind: 'presence.heartbeat', data: { connectionId: 'fit-check', channel: 'wp-cli', transport: 'process' } }) })
   await expect(page.locator('#event-position')).not.toHaveText(beforePosition)
   expect(await page.locator('.work-graph').getAttribute('viewBox')).toBe(fittedViewBox)
+})
+
+test('replay ticks patch an existing change row without replacing it', async ({ page }) => {
+  const events = await fetch(`${motionDaemon.url}/api/sessions/${encodeURIComponent(motionDaemon.sessionId)}/events`).then(response => response.json())
+  const playbackEvents = events.filter(event => event.kind !== 'presence.heartbeat')
+  const claimIndex = playbackEvents.findIndex(event => event.seq === motionMoments.claim.seq)
+  const confirmationIndex = playbackEvents.findIndex(event => event.seq === motionMoments.confirmation.seq)
+  await page.goto(`${motionDaemon.url}/?session=${encodeURIComponent(motionDaemon.sessionId)}&mode=replay&seq=${motionMoments.claim.seq}`)
+
+  const place = page.locator('[data-node-id="wp:option:motion_setting"]')
+  await expect(place.locator('.change-row')).toHaveCount(1)
+  await expect(page.getByRole('slider', { name: 'Replay position' })).toHaveValue(String(claimIndex))
+  await page.waitForTimeout(550)
+  await place.evaluate(element => {
+    const row = element.querySelector('.change-row')
+    window.__aphelionMotionRow = row
+    window.__aphelionMotionLead = row.querySelector('strong')
+    window.__aphelionTailBirths = []
+    element.querySelector('.change-tail').addEventListener('animationstart', event => {
+      if (event.animationName === 'tail-birth') window.__aphelionTailBirths.push(event.target.dataset.changeKey)
+    })
+  })
+
+  await page.getByRole('button', { name: 'Play trail' }).click()
+  await expect.poll(async () => Number(await page.getByRole('slider', { name: 'Replay position' }).inputValue())).toBe(confirmationIndex)
+  await expect(place.locator('.change-row')).toContainText('Updated motion setting')
+  expect(await place.evaluate(element => window.__aphelionMotionRow === element.querySelector('.change-row'))).toBe(true)
+  expect(await place.evaluate(element => window.__aphelionMotionLead === element.querySelector('.change-row strong'))).toBe(true)
+  expect(await page.evaluate(() => window.__aphelionTailBirths)).toEqual([])
+})
+
+test('tail birth runs for a new row but not a patched run row', async ({ page }) => {
+  await page.goto(motionDaemon.url)
+  const place = page.locator('[data-node-id="wp:option:motion_setting"]')
+  await expect(place.locator('.change-row')).toHaveCount(1)
+  await page.waitForTimeout(550)
+  await place.evaluate(element => {
+    window.__aphelionExistingMotionRow = element.querySelector('.change-row')
+    window.__aphelionTailBirths = []
+    element.querySelector('.change-tail').addEventListener('animationstart', event => {
+      if (event.animationName === 'tail-birth') window.__aphelionTailBirths.push(event.target.dataset.changeKey)
+    })
+  })
+
+  const startedAt = motionMoments.confirmation.ts + 800
+  motionMoments.deletion = motionDaemon.emit('wp', 'wp.option.deleted', { summary: 'Motion setting deleted', requestId: 'motion-delete', objectType: 'option', name: 'motion_setting', channel: 'wp-cli', transport: 'process' }, { ts: startedAt })
+  await expect(place.locator('.change-row')).toHaveCount(2)
+  await expect.poll(() => page.evaluate(() => window.__aphelionTailBirths.length)).toBe(1)
+  expect(await place.evaluate(element => window.__aphelionExistingMotionRow === element.querySelectorAll('.change-row')[1])).toBe(true)
+  const newRowKey = await place.locator('.change-row').first().getAttribute('data-change-key')
+  expect(await page.evaluate(() => window.__aphelionTailBirths)).toEqual([newRowKey])
+  await place.locator('.change-row').first().evaluate(element => { window.__aphelionDeletionRow = element })
+
+  motionMoments.secondDeletion = motionDaemon.emit('wp', 'wp.option.deleted', { summary: 'Motion setting deletion confirmed', requestId: 'motion-delete-again', objectType: 'option', name: 'motion_setting', channel: 'wp-cli', transport: 'process' }, { ts: startedAt + 800 })
+  await expect(place.locator('.change-row').first()).toContainText('2 deletions')
+  expect(await place.evaluate(element => window.__aphelionDeletionRow === element.querySelector('.change-row'))).toBe(true)
+  expect(await page.evaluate(() => window.__aphelionTailBirths)).toEqual([newRowKey])
+})
+
+test('paused replay freezes ambient graph motion', async ({ page }) => {
+  await page.goto(`${motionDaemon.url}/?session=${encodeURIComponent(motionDaemon.sessionId)}&mode=replay&seq=${motionMoments.claim.seq}`)
+
+  const place = page.locator('[data-node-id="wp:option:motion_setting"]')
+  await expect(place).toHaveClass(/claimed/)
+  await expect(page.locator('.app-shell')).toHaveAttribute('data-playing', 'false')
+  expect(await page.locator('.graph-edge.claimed').evaluate(element => getComputedStyle(element).animationPlayState)).toBe('paused')
+  expect(await place.locator('.place-dot').evaluate(element => getComputedStyle(element).animationPlayState)).toBe('paused')
+  expect(await page.locator('.work-graph').evaluate(element => element.animationsPaused())).toBe(true)
 })
 
 test('replay exposes its position and timelapse starts without pressing play', async ({ page }) => {

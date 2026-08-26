@@ -37,6 +37,8 @@
   --ease: cubic-bezier(.22, .72, .22, 1);
   --brand: #9332FF;
   --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --motion-standard: 300ms;
+  --motion-slow: 500ms;
   color: var(--text);
   font-family: var(--font);
   font-synthesis: none;
@@ -154,11 +156,11 @@ svg { display: block; }
 .graph-lane.territory-region rect { fill: color-mix(in oklch, var(--surface) 24%, transparent); stroke: color-mix(in oklch, var(--border) 72%, transparent); stroke-dasharray: 2 8; }
 .graph-lane.plugin-subregion rect { fill: color-mix(in oklch, var(--surface-raised) 18%, transparent); stroke: color-mix(in oklch, var(--border-strong) 54%, transparent); stroke-dasharray: 1 6; }
 .graph-lane.plugin-subregion .graph-lane-label { font-size: 9px; letter-spacing: .08em; }
-.containment-guide { fill: none; stroke: color-mix(in oklch, var(--border-strong) 64%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; opacity: .72; transition: opacity 320ms var(--ease); }
+.containment-guide { fill: none; stroke: color-mix(in oklch, var(--border-strong) 64%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; opacity: .72; transition: opacity var(--motion-slow) var(--ease); }
 .containment-guide.entering,
 .containment-guide.leaving { opacity: 0; }
 
-.graph-edge { fill: none; stroke: var(--border-strong); stroke-width: 1.15; vector-effect: non-scaling-stroke; transition: stroke 360ms var(--ease), opacity 360ms var(--ease), filter 360ms var(--ease); }
+.graph-edge { fill: none; stroke: var(--border-strong); stroke-width: 1.15; vector-effect: non-scaling-stroke; transition: stroke var(--motion-slow) var(--ease), opacity var(--motion-slow) var(--ease), filter var(--motion-slow) var(--ease); }
 .graph-edge.link { stroke-dasharray: 4 5; }
 .graph-edge.future { opacity: 0; }
 .graph-edge.claimed { stroke: var(--declared); stroke-dasharray: 2 7; animation: edge-travel var(--flow-duration, 1200ms) linear infinite; }
@@ -172,7 +174,7 @@ svg { display: block; }
 .graph-edge-label.active { fill: var(--live); }
 .energy-particle { fill: var(--live); filter: drop-shadow(0 0 7px var(--live)); }
 
-.graph-node { cursor: pointer; transition: opacity 400ms var(--ease); }
+.graph-node { cursor: pointer; transition: opacity var(--motion-slow) var(--ease); }
 .graph-node.future { opacity: 0; pointer-events: none; }
 .graph-node.filtered { display: none; }
 .graph-node.provisional { opacity: .68; }
@@ -187,7 +189,7 @@ svg { display: block; }
 .graph-node.birth .place-card { animation: node-birth 500ms var(--ease-out) both; transform-origin: left top; }
 @keyframes node-birth { from { transform: scale(.965); } }
 .place-card-foreign { overflow: visible; }
-.place-card { width: 100%; height: 100%; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); transition: border-color 420ms var(--ease), box-shadow 420ms var(--ease), opacity 420ms var(--ease); }
+.place-card { width: 100%; height: 100%; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); transition: height var(--motion-slow) var(--ease-out), border-color var(--motion-slow) var(--ease), box-shadow var(--motion-slow) var(--ease), opacity var(--motion-slow) var(--ease); }
 .graph-node:hover .place-card, .graph-node:focus-visible .place-card, .graph-node.selected .place-card { border-color: var(--border-strong); }
 .graph-node.claimed .place-card, .graph-node.active .place-card { border-color: color-mix(in oklch, var(--declared) 35%, var(--border)); }
 .graph-node.live .place-card { border-color: color-mix(in oklch, var(--live) 40%, var(--border)); box-shadow: 0 0 24px color-mix(in oklch, var(--live) 24%, transparent); }
@@ -196,10 +198,13 @@ svg { display: block; }
 .place-icon { width: 14px; height: 14px; fill: none; stroke: var(--text-2); stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
 .place-type { color: var(--text-2); font: 500 12px/1 var(--mono); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
 .place-address { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font: 12px/1 var(--mono); text-align: right; }
-.place-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); transition: background 360ms var(--ease), box-shadow 360ms var(--ease); }
+.place-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); transition: background var(--motion-slow) var(--ease), box-shadow var(--motion-slow) var(--ease); }
 .graph-node.claimed .place-dot, .graph-node.active .place-dot { background: var(--declared); animation: declared-pulse 1.6s var(--ease) infinite; }
 .graph-node.live .place-dot { background: var(--live); box-shadow: 0 0 14px color-mix(in oklch, var(--live) 55%, transparent); }
 @keyframes declared-pulse { 50% { box-shadow: 0 0 0 5px transparent; } 0%, 100% { box-shadow: 0 0 0 1px color-mix(in oklch, var(--declared) 42%, transparent); } }
+.app-shell:not([data-mode="live"])[data-playing="false"] .graph-edge.claimed,
+.app-shell:not([data-mode="live"])[data-playing="false"] .graph-node.claimed .place-dot,
+.app-shell:not([data-mode="live"])[data-playing="false"] .graph-node.active .place-dot { animation-play-state: paused; }
 .place-identity { min-height: 74px; padding: 12px 14px 11px; }
 .place-identity.without-state { min-height: 52px; }
 .graph-node.tombstone .place-card { border-color: color-mix(in oklch, var(--border) 70%, transparent); background: color-mix(in oklch, var(--surface) 72%, var(--canvas)); }
@@ -207,11 +212,17 @@ svg { display: block; }
 .graph-node.tombstone .place-identity.tombstone { min-height: 28px; padding: 2px 14px 5px 33px; }
 .graph-node.tombstone .place-name { display: block; overflow: hidden; color: var(--text-2); font: 500 12px/1.5 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .place-name { display: -webkit-box; overflow: hidden; color: var(--text); font-size: 15px; font-weight: 590; line-height: 1.35; letter-spacing: -.005em; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.place-state { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font: 13px/1.35 var(--mono); }
-.change-tail { border-top: 1px solid color-mix(in oklch, var(--border) 55%, transparent); }
-.change-row { min-height: 29px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 5px 12px 5px 14px; border-top: 1px solid color-mix(in oklch, var(--border) 55%, transparent); animation: tail-birth 300ms var(--ease-out) both; }
+.place-state { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 1; color: var(--text-2); font: 13px/1.35 var(--mono); transition: opacity var(--motion-slow) var(--ease), transform var(--motion-slow) var(--ease-out); }
+.place-state.leaving { opacity: 0; transform: translateY(-2px); }
+.change-tail { opacity: 1; border-top: 1px solid color-mix(in oklch, var(--border) 55%, transparent); transition: opacity var(--motion-slow) var(--ease); }
+.change-tail.leaving { opacity: 0; }
+.change-row { min-height: 29px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 5px 12px 5px 14px; border-top: 1px solid color-mix(in oklch, var(--border) 55%, transparent); opacity: 1; clip-path: inset(0); transform: translateY(0); transition: opacity var(--motion-slow) var(--ease), clip-path var(--motion-slow) var(--ease-out), transform var(--motion-slow) var(--ease-out); }
 .change-row:first-child { border-top: 0; }
+.change-row.entering { animation: tail-birth var(--motion-slow) var(--ease-out) both; }
+.change-row.leaving { opacity: 0; clip-path: inset(0 0 100%); transform: translateY(-3px); }
 @keyframes tail-birth { from { opacity: 0; clip-path: inset(0 0 100%); transform: translateY(-3px); } }
+@keyframes evidence-update { from { opacity: .5; } }
+.place-type.updating, .place-address.updating, .place-name.updating, .place-state.updating, .change-row.updating { animation: evidence-update var(--motion-slow) var(--ease-out) both; }
 .change-copy { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font-size: 13px; font-weight: 400; line-height: 1.35; }
 .change-copy strong { color: var(--text); font-weight: 500; }
 .change-row.awaiting .change-copy strong { color: var(--declared); }
@@ -223,7 +234,7 @@ svg { display: block; }
 .tail-more { width: 100%; min-height: 29px; padding: 5px 14px; border: 0; border-top: 1px solid color-mix(in oklch, var(--border) 55%, transparent); background: transparent; color: var(--text-3); font: 12px/1.35 var(--mono); text-align: left; cursor: pointer; }
 .tail-more:hover { color: var(--text-2); background: var(--surface-raised); }
 .change-tail[data-expanded="true"] { max-height: 244px; overflow-y: auto; scrollbar-gutter: stable; }
-.graph-port { fill: var(--canvas); stroke: var(--border-strong); stroke-width: 1.5; vector-effect: non-scaling-stroke; transition: stroke 360ms var(--ease), fill 360ms var(--ease), filter 360ms var(--ease); }
+.graph-port { fill: var(--canvas); stroke: var(--border-strong); stroke-width: 1.5; vector-effect: non-scaling-stroke; transition: stroke var(--motion-slow) var(--ease), fill var(--motion-slow) var(--ease), filter var(--motion-slow) var(--ease); }
 .graph-port.live { fill: var(--live); stroke: var(--live); filter: drop-shadow(0 0 7px var(--live)); }
 
 .graph-controls { position: absolute; left: 12px; bottom: 12px; z-index: 4; display: flex; align-items: center; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--band); }
@@ -416,6 +427,8 @@ import { buildSiteTopology, displayChannel, FULL_FIT_PLACE_LIMIT, groupTopologyC
 
 const $ = id => document.getElementById(id)
 const SVG_NS = 'http://www.w3.org/2000/svg'
+const STANDARD_TRANSITION_MS = 300
+const SLOW_TRANSITION_MS = 500
 const state = {
   mode: 'live',
   liveModel: createProjection(),
@@ -444,6 +457,8 @@ const state = {
   inspectorSelection: null,
   inspectorTab: 'place',
   urlReady: false,
+  renderClock: null,
+  renderDirection: 'none',
 }
 
 const deepLinkKeys = ['session', 'mode', 'seq', 'place', 'flow', 'tab']
@@ -732,7 +747,7 @@ function cardHeight(item) {
 }
 
 function changeRowElement(row) {
-  const element = node('div', `change-row ${row.status === 'confirmed' ? '' : row.status}`.trim())
+  const element = node('div', `change-row entering ${row.status === 'confirmed' ? '' : row.status}`.trim())
   const copy = node('span', 'change-copy')
   copy.append(node('strong', '', row.lead))
   if (row.rest) copy.append(node('span', 'change-rest', ` ${row.rest}`))
@@ -740,6 +755,9 @@ function changeRowElement(row) {
   if (row.status !== 'confirmed') meta.append(node('span', `change-flag ${row.status}`, row.status))
   if (row.time) meta.append(node('time', '', row.time))
   element.append(copy, meta)
+  const settle = () => element.classList.remove('entering')
+  element.addEventListener('animationend', settle, { once: true })
+  setTimeout(settle, SLOW_TRANSITION_MS + 50)
   return element
 }
 
@@ -758,38 +776,88 @@ function placeCard(item, height, model) {
   identity.append(name, stateLine)
   const tail = node('div', 'change-tail')
   card.append(band, identity, tail)
-  card.__aphelion = { type, icon, typeLabel, address, dot, identity, name, stateLine, tail, rows: new Map(), more: null }
+  card.__aphelion = { type, icon, typeLabel, address, dot, band, identity, name, stateLine, tail, rows: new Map(), more: null }
   patchPlaceCard(card, item, height, model)
   return card
 }
 
 function changeRowKey(row, index) {
-  const ids = (row.changes || []).map(change => change.id).filter(Boolean)
-  return ids.length ? ids.join('|') : `${row.lead}:${row.rest}:${row.time}:${index}`
+  const first = row.changes?.[0]
+  if (first?.id) return first.id
+  if (first?.seq !== undefined) return `change:seq:${first.seq}`
+  return row.id || `row:${index}`
 }
 
 function patchChangeRow(element, row) {
-  element.className = `change-row ${row.status === 'confirmed' ? '' : row.status}`.trim()
+  let changed = false
+  element.classList.remove('awaiting', 'failed', 'unconfirmed')
+  if (row.status !== 'confirmed') element.classList.add(row.status)
   const copy = element.querySelector('.change-copy')
   const strong = copy.querySelector('strong')
-  if (strong.textContent !== row.lead) strong.textContent = row.lead
+  if (strong.textContent !== row.lead) { strong.textContent = row.lead; changed = true }
   let rest = copy.querySelector('.change-rest')
   if (row.rest) {
-    if (!rest) { rest = node('span', 'change-rest'); copy.append(rest) }
-    if (rest.textContent !== ` ${row.rest}`) rest.textContent = ` ${row.rest}`
-  } else rest?.remove()
+    if (!rest) { rest = node('span', 'change-rest'); copy.append(rest); changed = true }
+    if (rest.textContent !== ` ${row.rest}`) { rest.textContent = ` ${row.rest}`; changed = true }
+  } else if (rest) { rest.remove(); changed = true }
   const meta = element.querySelector('.change-meta')
   let flag = meta.querySelector('.change-flag')
   if (row.status !== 'confirmed') {
-    if (!flag) { flag = node('span', `change-flag ${row.status}`); meta.prepend(flag) }
+    if (!flag) { flag = node('span', `change-flag ${row.status}`); meta.prepend(flag); changed = true }
     flag.className = `change-flag ${row.status}`
-    if (flag.textContent !== row.status) flag.textContent = row.status
-  } else flag?.remove()
+    if (flag.textContent !== row.status) { flag.textContent = row.status; changed = true }
+  } else if (flag) { flag.remove(); changed = true }
   let time = meta.querySelector('time')
   if (row.time) {
-    if (!time) { time = node('time'); meta.append(time) }
-    if (time.textContent !== row.time) time.textContent = row.time
-  } else time?.remove()
+    if (!time) { time = node('time'); meta.append(time); changed = true }
+    if (time.textContent !== row.time) { time.textContent = row.time; changed = true }
+  } else if (time) { time.remove(); changed = true }
+  if (changed) showEvidenceUpdate(element)
+}
+
+function cancelExit(element) {
+  const exit = element.__aphelionExit
+  if (exit) {
+    clearTimeout(exit.timer)
+    element.removeEventListener('transitionend', exit.finish)
+    delete element.__aphelionExit
+  }
+  element.classList.remove('leaving')
+}
+
+function transitionOut(element, complete) {
+  cancelExit(element)
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { complete(); return }
+  element.classList.remove('entering', 'updating')
+  element.classList.add('leaving')
+  const finish = event => {
+    if (event?.target && event.target !== element) return
+    clearTimeout(element.__aphelionExit?.timer)
+    element.removeEventListener('transitionend', finish)
+    delete element.__aphelionExit
+    element.classList.remove('leaving')
+    complete()
+  }
+  const timer = setTimeout(finish, SLOW_TRANSITION_MS + 50)
+  element.__aphelionExit = { finish, timer }
+  element.addEventListener('transitionend', finish)
+}
+
+function showEvidenceUpdate(element) {
+  if (state.renderDirection === 'none' || element.classList.contains('entering') || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  element.classList.remove('updating')
+  void element.offsetWidth
+  element.classList.add('updating')
+  clearTimeout(element.__aphelionUpdateTimer)
+  element.__aphelionUpdateTimer = setTimeout(() => element.classList.remove('updating'), SLOW_TRANSITION_MS + 50)
+}
+
+function patchEvidenceText(element, value, key) {
+  const rendered = String(value ?? '')
+  const changed = element.textContent !== rendered
+  if (element.textContent !== rendered) element.textContent = rendered
+  if (key) element.dataset.changeKey = key
+  if (changed) showEvidenceUpdate(element)
 }
 
 function patchPlaceCard(card, item, height, model) {
@@ -801,23 +869,35 @@ function patchPlaceCard(card, item, height, model) {
     refs.icon = nextIcon
     refs.type = type
   }
-  if (refs.typeLabel.textContent !== type) refs.typeLabel.textContent = type
+  refs.band.dataset.placeKey = item.id
+  patchEvidenceText(refs.typeLabel, type, item.id)
   const address = item.address ?? item.identity ?? item.id
-  if (refs.address.textContent !== address) refs.address.textContent = address
-  if (refs.name.textContent !== item.title) refs.name.textContent = item.title
+  patchEvidenceText(refs.address, address, item.id)
+  const changeKey = item.stateChangeId || item.lastChange?.id || (item.seq !== undefined ? `change:seq:${item.seq}` : item.id)
+  patchEvidenceText(refs.name, item.title, changeKey)
 
   const stateLine = cardStateLine(item)
   refs.identity.className = `place-identity${stateLine ? '' : ' without-state'}${item.sizeTier === 'tombstone' ? ' tombstone' : ''}`
-  refs.stateLine.hidden = !stateLine
-  if (stateLine && refs.stateLine.textContent !== stateLine) refs.stateLine.textContent = stateLine
+  if (stateLine) {
+    cancelExit(refs.stateLine)
+    refs.stateLine.hidden = false
+    patchEvidenceText(refs.stateLine, stateLine, changeKey)
+  } else if (!refs.stateLine.hidden) {
+    const hide = () => { refs.stateLine.hidden = true }
+    if (state.renderDirection === 'backward') transitionOut(refs.stateLine, hide)
+    else hide()
+  }
 
   const rows = cardRows(item)
   const expanded = state.expandedTails.has(item.id)
-  if (rows.length && !refs.tail.isConnected) card.append(refs.tail)
-  if (!rows.length && refs.tail.isConnected) refs.tail.remove()
+  if (rows.length) {
+    cancelExit(refs.tail)
+    if (!refs.tail.isConnected) card.append(refs.tail)
+  }
   refs.tail.dataset.expanded = String(expanded)
   const visibleRows = expanded ? rows : rows.slice(0, 3)
   const wanted = new Set()
+  let nextRow = refs.tail.firstElementChild
   visibleRows.forEach((row, index) => {
     const key = changeRowKey(row, index)
     wanted.add(key)
@@ -827,9 +907,16 @@ function patchPlaceCard(card, item, height, model) {
       element.dataset.changeKey = key
       refs.rows.set(key, element)
     } else patchChangeRow(element, row)
-    refs.tail.append(element)
+    cancelExit(element)
+    // Preserve a keyed row in its current slot. Re-appending an entering row
+    // detaches it briefly and restarts tail-birth when a singleton becomes a run.
+    if (element !== nextRow) refs.tail.insertBefore(element, nextRow)
+    nextRow = element.nextElementSibling
   })
-  for (const [key, element] of refs.rows) if (!wanted.has(key)) { element.remove(); refs.rows.delete(key) }
+  for (const [key, element] of refs.rows) if (!wanted.has(key) && element.isConnected) {
+    if (state.renderDirection === 'backward') transitionOut(element, () => element.remove())
+    else element.remove()
+  }
 
   if (rows.length > 3) {
     if (!refs.more) {
@@ -854,6 +941,10 @@ function patchPlaceCard(card, item, height, model) {
   } else if (refs.more) {
     refs.more.remove()
     refs.more = null
+  }
+  if (!rows.length && refs.tail.isConnected) {
+    if (state.renderDirection === 'backward') transitionOut(refs.tail, () => refs.tail.remove())
+    else refs.tail.remove()
   }
   card.style.height = `${height}px`
 }
@@ -880,6 +971,16 @@ function updateCamera() {
   setSvgAttributes(graph.grid, { x, y, width, height })
   const fittedWidth = Math.max(1, state.cameraBounds?.width || width)
   graph.zoomValue.textContent = `${Math.round(fittedWidth / width * 100)}%`
+}
+
+function syncGraphPlaybackMotion() {
+  const graph = state.graph
+  if (!graph?.svg) return
+  const paused = state.mode !== 'live' && !state.playing
+  if (graph.playbackMotionPaused === paused) return
+  if (paused) graph.svg.pauseAnimations()
+  else graph.svg.unpauseAnimations()
+  graph.playbackMotionPaused = paused
 }
 
 function ensureGraphShell(flow) {
@@ -1063,7 +1164,7 @@ function renderComponents(model, topology = currentTopology(model)) {
     for (const component of components) {
       const tasks = model.plan.nodes.filter(candidate => candidate.parent === component.id)
       const done = tasks.filter(task => task.status === 'done').length
-      graphNodes.push({ id: component.id, depth: getDepth(component), group: 'plan', kind: 'component', address: component.id, title: component.title, stateLine: `${done} of ${tasks.length} tasks · ${component.status}`, status: component.status, rows: tasks.slice().reverse().map(task => ({ lead: task.status === 'done' ? 'Completed' : task.status === 'active' ? 'Working' : 'Planned', rest: task.title, time: '', status: task.status === 'blocked' ? 'failed' : task.status === 'active' ? 'awaiting' : 'confirmed' })) })
+      graphNodes.push({ id: component.id, depth: getDepth(component), group: 'plan', kind: 'component', address: component.id, title: component.title, stateLine: `${done} of ${tasks.length} tasks · ${component.status}`, status: component.status, rows: tasks.slice().reverse().map(task => ({ id: task.id, lead: task.status === 'done' ? 'Completed' : task.status === 'active' ? 'Working' : 'Planned', rest: task.title, time: '', status: task.status === 'blocked' ? 'failed' : task.status === 'active' ? 'awaiting' : 'confirmed' })) })
     }
     for (const component of components) for (const need of component.needs || []) if (byId[need]) graphEdges.push({ from: need, to: component.id, kind: 'dependency' })
   }
@@ -1077,6 +1178,8 @@ function renderComponents(model, topology = currentTopology(model)) {
       identity: topology.root.identity,
       title: topology.root.title,
       stateLine: topology.root.stateLine,
+      stateChangeId: topology.root.stateChangeId,
+      lastChange: topology.root.lastChange,
       // The site root summarizes territory; repeating every child change here
       // would make one action appear twice on the same map.
       changes: [],
@@ -1093,6 +1196,8 @@ function renderComponents(model, topology = currentTopology(model)) {
       identity: entity.identity,
       title: entity.title,
       stateLine: entity.future ? 'Not reached yet' : ['declared', 'unconfirmed'].includes(entity.visibility) ? null : entity.stateLine,
+      stateChangeId: entity.stateChangeId,
+      lastChange: entity.lastChange,
       changes: entity.changes,
       future: entity.future,
       visibility: entity.visibility,
@@ -1512,16 +1617,24 @@ function closeInspector() {
 }
 
 function render(model = currentProjection()) {
+  const event = state.mode === 'live' ? state.liveEvents.at(-1) : state.replayEvents[state.cursor]
+  const clock = { context: `${state.sessionId || model.daemon?.sessionId || 'none'}:${state.mode}`, seq: event?.seq || 0 }
+  state.renderDirection = state.renderClock?.context === clock.context
+    ? clock.seq > state.renderClock.seq ? 'forward' : clock.seq < state.renderClock.seq ? 'backward' : 'none'
+    : 'none'
   const topology = currentTopology(model)
   const shell = document.querySelector('.app-shell')
   shell.dataset.appState = 'ready'
   shell.dataset.mode = state.mode
+  shell.dataset.playing = String(state.playing)
   renderHeader(model)
   renderWarnings(topology)
   renderSessions(model)
   renderOrbit(model, topology)
   renderComponents(model, topology)
+  syncGraphPlaybackMotion()
   renderInspector(model, topology)
+  state.renderClock = clock
 }
 
 function scheduleRender(model = currentProjection()) {
@@ -1678,8 +1791,8 @@ function nextPlaybackCursor() {
 
 function playbackDelay(from, to) {
   const raw = Math.max(0, (state.replayEvents[to]?.ts || 0) - (state.replayEvents[from]?.ts || 0))
-  if (state.mode === 'timelapse') return Math.max(90, Math.min(260, raw * .035 || 180))
-  return Math.max(180, Math.min(1200, raw || 420))
+  if (state.mode === 'timelapse') return Math.max(STANDARD_TRANSITION_MS, Math.min(SLOW_TRANSITION_MS, raw * .035 || 420))
+  return Math.max(STANDARD_TRANSITION_MS, Math.min(1200, raw || 420))
 }
 
 function schedulePlayback() {

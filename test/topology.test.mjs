@@ -359,6 +359,7 @@ test('place cards derive noun, state, last change, and history without promoting
   ]
   const topology = buildSiteTopology(events)
   const page = topology.nodes[0]
+  const awaiting = buildSiteTopology(events.slice(0, 3)).nodes[0]
 
   assert.equal(topology.root.identity, 'localhost:8081')
   assert.equal(topology.root.title, 'Accelerate Demo')
@@ -367,6 +368,8 @@ test('place cards derive noun, state, last change, and history without promoting
   assert.equal(page.stateLine, 'Trash · 4 blocks')
   assert.equal(page.lastChange.verb, 'Trashed')
   assert.equal(page.changes.length, 2)
+  assert.equal(page.changes[0].id, awaiting.changes[0].id)
+  assert.equal(page.stateChangeId, page.changes[1].id)
   assert.equal(page.changes[0].claim.summary, 'Trash the page')
   assert.equal(page.changes[0].status, 'confirmed')
   assert.equal(page.changes[1].claim.summary, 'Trash the page')

@@ -6,6 +6,8 @@ import { buildSiteTopology, displayChannel, FULL_FIT_PLACE_LIMIT, groupTopologyC
 
 const $ = id => document.getElementById(id)
 const SVG_NS = 'http://www.w3.org/2000/svg'
+const STANDARD_TRANSITION_MS = 300
+const SLOW_TRANSITION_MS = 500
 const state = {
   mode: 'live',
   liveModel: createProjection(),
@@ -34,6 +36,8 @@ const state = {
   inspectorSelection: null,
   inspectorTab: 'place',
   urlReady: false,
+  renderClock: null,
+  renderDirection: 'none',
 }
 
 const deepLinkKeys = ['session', 'mode', 'seq', 'place', 'flow', 'tab']
@@ -322,7 +326,7 @@ function cardHeight(item) {
 }
 
 function changeRowElement(row) {
-  const element = node('div', `change-row ${row.status === 'confirmed' ? '' : row.status}`.trim())
+  const element = node('div', `change-row entering ${row.status === 'confirmed' ? '' : row.status}`.trim())
   const copy = node('span', 'change-copy')
   copy.append(node('strong', '', row.lead))
   if (row.rest) copy.append(node('span', 'change-rest', ` ${row.rest}`))
@@ -330,6 +334,9 @@ function changeRowElement(row) {
   if (row.status !== 'confirmed') meta.append(node('span', `change-flag ${row.status}`, row.status))
   if (row.time) meta.append(node('time', '', row.time))
   element.append(copy, meta)
+  const settle = () => element.classList.remove('entering')
+  element.addEventListener('animationend', settle, { once: true })
+  setTimeout(settle, SLOW_TRANSITION_MS + 50)
   return element
 }
 
@@ -348,38 +355,88 @@ function placeCard(item, height, model) {
   identity.append(name, stateLine)
   const tail = node('div', 'change-tail')
   card.append(band, identity, tail)
-  card.__aphelion = { type, icon, typeLabel, address, dot, identity, name, stateLine, tail, rows: new Map(), more: null }
+  card.__aphelion = { type, icon, typeLabel, address, dot, band, identity, name, stateLine, tail, rows: new Map(), more: null }
   patchPlaceCard(card, item, height, model)
   return card
 }
 
 function changeRowKey(row, index) {
-  const ids = (row.changes || []).map(change => change.id).filter(Boolean)
-  return ids.length ? ids.join('|') : `${row.lead}:${row.rest}:${row.time}:${index}`
+  const first = row.changes?.[0]
+  if (first?.id) return first.id
+  if (first?.seq !== undefined) return `change:seq:${first.seq}`
+  return row.id || `row:${index}`
 }
 
 function patchChangeRow(element, row) {
-  element.className = `change-row ${row.status === 'confirmed' ? '' : row.status}`.trim()
+  let changed = false
+  element.classList.remove('awaiting', 'failed', 'unconfirmed')
+  if (row.status !== 'confirmed') element.classList.add(row.status)
   const copy = element.querySelector('.change-copy')
   const strong = copy.querySelector('strong')
-  if (strong.textContent !== row.lead) strong.textContent = row.lead
+  if (strong.textContent !== row.lead) { strong.textContent = row.lead; changed = true }
   let rest = copy.querySelector('.change-rest')
   if (row.rest) {
-    if (!rest) { rest = node('span', 'change-rest'); copy.append(rest) }
-    if (rest.textContent !== ` ${row.rest}`) rest.textContent = ` ${row.rest}`
-  } else rest?.remove()
+    if (!rest) { rest = node('span', 'change-rest'); copy.append(rest); changed = true }
+    if (rest.textContent !== ` ${row.rest}`) { rest.textContent = ` ${row.rest}`; changed = true }
+  } else if (rest) { rest.remove(); changed = true }
   const meta = element.querySelector('.change-meta')
   let flag = meta.querySelector('.change-flag')
   if (row.status !== 'confirmed') {
-    if (!flag) { flag = node('span', `change-flag ${row.status}`); meta.prepend(flag) }
+    if (!flag) { flag = node('span', `change-flag ${row.status}`); meta.prepend(flag); changed = true }
     flag.className = `change-flag ${row.status}`
-    if (flag.textContent !== row.status) flag.textContent = row.status
-  } else flag?.remove()
+    if (flag.textContent !== row.status) { flag.textContent = row.status; changed = true }
+  } else if (flag) { flag.remove(); changed = true }
   let time = meta.querySelector('time')
   if (row.time) {
-    if (!time) { time = node('time'); meta.append(time) }
-    if (time.textContent !== row.time) time.textContent = row.time
-  } else time?.remove()
+    if (!time) { time = node('time'); meta.append(time); changed = true }
+    if (time.textContent !== row.time) { time.textContent = row.time; changed = true }
+  } else if (time) { time.remove(); changed = true }
+  if (changed) showEvidenceUpdate(element)
+}
+
+function cancelExit(element) {
+  const exit = element.__aphelionExit
+  if (exit) {
+    clearTimeout(exit.timer)
+    element.removeEventListener('transitionend', exit.finish)
+    delete element.__aphelionExit
+  }
+  element.classList.remove('leaving')
+}
+
+function transitionOut(element, complete) {
+  cancelExit(element)
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { complete(); return }
+  element.classList.remove('entering', 'updating')
+  element.classList.add('leaving')
+  const finish = event => {
+    if (event?.target && event.target !== element) return
+    clearTimeout(element.__aphelionExit?.timer)
+    element.removeEventListener('transitionend', finish)
+    delete element.__aphelionExit
+    element.classList.remove('leaving')
+    complete()
+  }
+  const timer = setTimeout(finish, SLOW_TRANSITION_MS + 50)
+  element.__aphelionExit = { finish, timer }
+  element.addEventListener('transitionend', finish)
+}
+
+function showEvidenceUpdate(element) {
+  if (state.renderDirection === 'none' || element.classList.contains('entering') || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  element.classList.remove('updating')
+  void element.offsetWidth
+  element.classList.add('updating')
+  clearTimeout(element.__aphelionUpdateTimer)
+  element.__aphelionUpdateTimer = setTimeout(() => element.classList.remove('updating'), SLOW_TRANSITION_MS + 50)
+}
+
+function patchEvidenceText(element, value, key) {
+  const rendered = String(value ?? '')
+  const changed = element.textContent !== rendered
+  if (element.textContent !== rendered) element.textContent = rendered
+  if (key) element.dataset.changeKey = key
+  if (changed) showEvidenceUpdate(element)
 }
 
 function patchPlaceCard(card, item, height, model) {
@@ -391,23 +448,35 @@ function patchPlaceCard(card, item, height, model) {
     refs.icon = nextIcon
     refs.type = type
   }
-  if (refs.typeLabel.textContent !== type) refs.typeLabel.textContent = type
+  refs.band.dataset.placeKey = item.id
+  patchEvidenceText(refs.typeLabel, type, item.id)
   const address = item.address ?? item.identity ?? item.id
-  if (refs.address.textContent !== address) refs.address.textContent = address
-  if (refs.name.textContent !== item.title) refs.name.textContent = item.title
+  patchEvidenceText(refs.address, address, item.id)
+  const changeKey = item.stateChangeId || item.lastChange?.id || (item.seq !== undefined ? `change:seq:${item.seq}` : item.id)
+  patchEvidenceText(refs.name, item.title, changeKey)
 
   const stateLine = cardStateLine(item)
   refs.identity.className = `place-identity${stateLine ? '' : ' without-state'}${item.sizeTier === 'tombstone' ? ' tombstone' : ''}`
-  refs.stateLine.hidden = !stateLine
-  if (stateLine && refs.stateLine.textContent !== stateLine) refs.stateLine.textContent = stateLine
+  if (stateLine) {
+    cancelExit(refs.stateLine)
+    refs.stateLine.hidden = false
+    patchEvidenceText(refs.stateLine, stateLine, changeKey)
+  } else if (!refs.stateLine.hidden) {
+    const hide = () => { refs.stateLine.hidden = true }
+    if (state.renderDirection === 'backward') transitionOut(refs.stateLine, hide)
+    else hide()
+  }
 
   const rows = cardRows(item)
   const expanded = state.expandedTails.has(item.id)
-  if (rows.length && !refs.tail.isConnected) card.append(refs.tail)
-  if (!rows.length && refs.tail.isConnected) refs.tail.remove()
+  if (rows.length) {
+    cancelExit(refs.tail)
+    if (!refs.tail.isConnected) card.append(refs.tail)
+  }
   refs.tail.dataset.expanded = String(expanded)
   const visibleRows = expanded ? rows : rows.slice(0, 3)
   const wanted = new Set()
+  let nextRow = refs.tail.firstElementChild
   visibleRows.forEach((row, index) => {
     const key = changeRowKey(row, index)
     wanted.add(key)
@@ -417,9 +486,16 @@ function patchPlaceCard(card, item, height, model) {
       element.dataset.changeKey = key
       refs.rows.set(key, element)
     } else patchChangeRow(element, row)
-    refs.tail.append(element)
+    cancelExit(element)
+    // Preserve a keyed row in its current slot. Re-appending an entering row
+    // detaches it briefly and restarts tail-birth when a singleton becomes a run.
+    if (element !== nextRow) refs.tail.insertBefore(element, nextRow)
+    nextRow = element.nextElementSibling
   })
-  for (const [key, element] of refs.rows) if (!wanted.has(key)) { element.remove(); refs.rows.delete(key) }
+  for (const [key, element] of refs.rows) if (!wanted.has(key) && element.isConnected) {
+    if (state.renderDirection === 'backward') transitionOut(element, () => element.remove())
+    else element.remove()
+  }
 
   if (rows.length > 3) {
     if (!refs.more) {
@@ -444,6 +520,10 @@ function patchPlaceCard(card, item, height, model) {
   } else if (refs.more) {
     refs.more.remove()
     refs.more = null
+  }
+  if (!rows.length && refs.tail.isConnected) {
+    if (state.renderDirection === 'backward') transitionOut(refs.tail, () => refs.tail.remove())
+    else refs.tail.remove()
   }
   card.style.height = `${height}px`
 }
@@ -470,6 +550,16 @@ function updateCamera() {
   setSvgAttributes(graph.grid, { x, y, width, height })
   const fittedWidth = Math.max(1, state.cameraBounds?.width || width)
   graph.zoomValue.textContent = `${Math.round(fittedWidth / width * 100)}%`
+}
+
+function syncGraphPlaybackMotion() {
+  const graph = state.graph
+  if (!graph?.svg) return
+  const paused = state.mode !== 'live' && !state.playing
+  if (graph.playbackMotionPaused === paused) return
+  if (paused) graph.svg.pauseAnimations()
+  else graph.svg.unpauseAnimations()
+  graph.playbackMotionPaused = paused
 }
 
 function ensureGraphShell(flow) {
@@ -653,7 +743,7 @@ function renderComponents(model, topology = currentTopology(model)) {
     for (const component of components) {
       const tasks = model.plan.nodes.filter(candidate => candidate.parent === component.id)
       const done = tasks.filter(task => task.status === 'done').length
-      graphNodes.push({ id: component.id, depth: getDepth(component), group: 'plan', kind: 'component', address: component.id, title: component.title, stateLine: `${done} of ${tasks.length} tasks · ${component.status}`, status: component.status, rows: tasks.slice().reverse().map(task => ({ lead: task.status === 'done' ? 'Completed' : task.status === 'active' ? 'Working' : 'Planned', rest: task.title, time: '', status: task.status === 'blocked' ? 'failed' : task.status === 'active' ? 'awaiting' : 'confirmed' })) })
+      graphNodes.push({ id: component.id, depth: getDepth(component), group: 'plan', kind: 'component', address: component.id, title: component.title, stateLine: `${done} of ${tasks.length} tasks · ${component.status}`, status: component.status, rows: tasks.slice().reverse().map(task => ({ id: task.id, lead: task.status === 'done' ? 'Completed' : task.status === 'active' ? 'Working' : 'Planned', rest: task.title, time: '', status: task.status === 'blocked' ? 'failed' : task.status === 'active' ? 'awaiting' : 'confirmed' })) })
     }
     for (const component of components) for (const need of component.needs || []) if (byId[need]) graphEdges.push({ from: need, to: component.id, kind: 'dependency' })
   }
@@ -667,6 +757,8 @@ function renderComponents(model, topology = currentTopology(model)) {
       identity: topology.root.identity,
       title: topology.root.title,
       stateLine: topology.root.stateLine,
+      stateChangeId: topology.root.stateChangeId,
+      lastChange: topology.root.lastChange,
       // The site root summarizes territory; repeating every child change here
       // would make one action appear twice on the same map.
       changes: [],
@@ -683,6 +775,8 @@ function renderComponents(model, topology = currentTopology(model)) {
       identity: entity.identity,
       title: entity.title,
       stateLine: entity.future ? 'Not reached yet' : ['declared', 'unconfirmed'].includes(entity.visibility) ? null : entity.stateLine,
+      stateChangeId: entity.stateChangeId,
+      lastChange: entity.lastChange,
       changes: entity.changes,
       future: entity.future,
       visibility: entity.visibility,
@@ -1102,16 +1196,24 @@ function closeInspector() {
 }
 
 function render(model = currentProjection()) {
+  const event = state.mode === 'live' ? state.liveEvents.at(-1) : state.replayEvents[state.cursor]
+  const clock = { context: `${state.sessionId || model.daemon?.sessionId || 'none'}:${state.mode}`, seq: event?.seq || 0 }
+  state.renderDirection = state.renderClock?.context === clock.context
+    ? clock.seq > state.renderClock.seq ? 'forward' : clock.seq < state.renderClock.seq ? 'backward' : 'none'
+    : 'none'
   const topology = currentTopology(model)
   const shell = document.querySelector('.app-shell')
   shell.dataset.appState = 'ready'
   shell.dataset.mode = state.mode
+  shell.dataset.playing = String(state.playing)
   renderHeader(model)
   renderWarnings(topology)
   renderSessions(model)
   renderOrbit(model, topology)
   renderComponents(model, topology)
+  syncGraphPlaybackMotion()
   renderInspector(model, topology)
+  state.renderClock = clock
 }
 
 function scheduleRender(model = currentProjection()) {
@@ -1268,8 +1370,8 @@ function nextPlaybackCursor() {
 
 function playbackDelay(from, to) {
   const raw = Math.max(0, (state.replayEvents[to]?.ts || 0) - (state.replayEvents[from]?.ts || 0))
-  if (state.mode === 'timelapse') return Math.max(90, Math.min(260, raw * .035 || 180))
-  return Math.max(180, Math.min(1200, raw || 420))
+  if (state.mode === 'timelapse') return Math.max(STANDARD_TRANSITION_MS, Math.min(SLOW_TRANSITION_MS, raw * .035 || 420))
+  return Math.max(STANDARD_TRANSITION_MS, Math.min(1200, raw || 420))
 }
 
 function schedulePlayback() {

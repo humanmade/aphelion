@@ -74,6 +74,8 @@ files: [src/replay/**]
 - [x] Make replay position explicit and auto-play timelapse over visual events {#replay-liveness}
 - [x] Keep replay state and deep links scoped to the playhead clock {#replay-one-clock}
   from: post-0.1 QA
+- [x] Preserve evidence-row identity across ticks and overlap replay landings with eased transitions {#replay-continuity}
+  from: motion eval
 
 ## Render the timelapse {#timelapse}
 tech: render trail projection to video, re-renderable after the fact
