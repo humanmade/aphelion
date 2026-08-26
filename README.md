@@ -10,12 +10,9 @@
 
 ![A recorded agent session in the Aphelion timelapse: the site and its content, structure, plugin, and settings territories, with a WP-CLI change landing live on a plugin setting](assets/aphelion-board.jpg)
 
-Agents already operate WordPress sites. Aphelion records every move they make into an
-append-only trail on your machine, draws the work as a living map while it happens, and
-replays any moment when you need to prove what actually changed. When an agent claims
-something, WordPress's own confirmation lands beside the claim: agreement stays quiet,
-and divergence is the thing you notice. Observability while it runs, an audit trail
-forever after.
+Agents already operate WordPress sites. Aphelion records every move into an append-only
+trail on your machine, rendered three ways: a real-time map of the work, a replay of any
+moment, and an audit trail that proves what actually changed.
 
 What makes the record trustworthy:
 
