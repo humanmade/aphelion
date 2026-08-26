@@ -2,6 +2,11 @@
 
 All notable changes to Aphelion are documented here.
 
+## 0.3.2 - 2026-08-26
+
+Documentation release: the README opening lands in two sentences, and the trust
+properties speak in plain declaratives. No runtime changes.
+
 ## 0.3.1 - 2026-08-26
 
 Documentation release: the README carries the audit-and-governance positioning and
