@@ -36,7 +36,7 @@
     "build": "node scripts/build-board.mjs",
     "check": "node scripts/check-source.mjs",
     "check:docs": "node scripts/check-docs.mjs",
-    "test": "node --test test/**/*.test.mjs",
+    "test": "node --test test/*.test.mjs",
     "test:browser": "playwright test",
     "check:package": "node scripts/check-package.mjs && publint && attw --profile esm-only --pack .",
     "pack:check": "node scripts/check-pack.mjs",
