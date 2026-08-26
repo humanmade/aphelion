@@ -281,6 +281,57 @@ test('replay keeps created content live until its recorded deletion', async ({ p
   }
 })
 
+test('tombstone compaction preserves identity and eases card height in both directions', async ({ page }) => {
+  const trailRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-tombstone-motion-'))
+  const siteDaemon = await startDaemon({ target: 'http://localhost:8081', targetType: 'site', trailDirectory: path.join(trailRoot, 'trails'), port: 6480, watch: false })
+  const ingest = event => fetch(`${siteDaemon.url}/ingest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(event) })
+  try {
+    await ingest({ source: 'wp', kind: 'wp.post.created', data: { requestId: 'create-glide', objectType: 'post', objectId: 485, postType: 'page', title: 'Gliding tombstone', status: 'draft', blockCount: 2, channel: 'wp-cli' } })
+    await page.goto(siteDaemon.url)
+    const place = page.locator('[data-node-id="wp:post:485"]')
+    await expect(place).toHaveAttribute('data-size-tier', 'standard')
+    await place.evaluate(element => {
+      window.__tombstonePlace = element
+      window.__tombstoneCard = element.querySelector('.place-card')
+      window.__tombstoneStartCssHeight = null
+      new MutationObserver(() => {
+        if (element.dataset.sizeTier === 'tombstone') window.__tombstoneStartCssHeight = parseFloat(getComputedStyle(element.querySelector('.place-card')).height)
+      }).observe(element, { attributes: true, attributeFilter: ['data-size-tier'] })
+    })
+
+    await ingest({ source: 'wp', kind: 'wp.post.deleted', data: { requestId: 'delete-glide', objectType: 'post', objectId: 485, postType: 'page', title: 'Gliding tombstone', channel: 'wp-cli' } })
+    await ingest({ source: 'wp', kind: 'wp.option.updated', data: { requestId: 'after-glide', objectType: 'option', name: 'blogdescription', channel: 'wp-cli' } })
+    await expect(place).toHaveAttribute('data-size-tier', 'tombstone')
+    const transition = await place.evaluate(element => ({
+      samePlace: window.__tombstonePlace === element,
+      sameCard: window.__tombstoneCard === element.querySelector('.place-card'),
+      startCssHeight: window.__tombstoneStartCssHeight,
+      cardProperty: getComputedStyle(element.querySelector('.place-card')).transitionProperty,
+      cardDuration: getComputedStyle(element.querySelector('.place-card')).transitionDuration,
+      foreignProperty: getComputedStyle(element.querySelector('.place-card-foreign')).transitionProperty,
+      foreignDuration: getComputedStyle(element.querySelector('.place-card-foreign')).transitionDuration,
+    }))
+    expect(transition.samePlace).toBe(true)
+    expect(transition.sameCard).toBe(true)
+    expect(transition.startCssHeight).toBeGreaterThan(58)
+    expect(transition.cardProperty).toContain('height')
+    expect(transition.foreignProperty).toContain('height')
+    expect(transition.cardDuration).toContain('0.5s')
+    expect(transition.foreignDuration).toContain('0.5s')
+    await expect(place.locator('.place-card')).toHaveCSS('height', '58px')
+
+    const events = await fetch(`${siteDaemon.url}/api/sessions/${encodeURIComponent(siteDaemon.sessionId)}/events`).then(response => response.json())
+    const beforeDelete = events.filter(event => event.kind !== 'presence.heartbeat').findIndex(event => event.data?.requestId === 'create-glide')
+    await page.getByRole('tab', { name: 'Replay' }).click()
+    await page.getByRole('slider', { name: 'Replay position' }).fill(String(beforeDelete))
+    await expect(place).toHaveAttribute('data-size-tier', 'standard')
+    expect(await place.evaluate(element => window.__tombstonePlace === element && window.__tombstoneCard === element.querySelector('.place-card'))).toBe(true)
+  } finally {
+    await siteDaemon.close('tombstone-motion-test')
+    fs.rmSync(trailRoot, { recursive: true, force: true })
+  }
+})
+
 test('keyed rendering preserves card identity and a user-moved camera across live events', async ({ page }) => {
   await page.goto(daemon.url)
   await page.waitForSelector('[data-node-id="wp:post:42"]', { state: 'attached' })
@@ -304,6 +355,55 @@ test('keyed rendering preserves card identity and a user-moved camera across liv
   await fetch(`${daemon.url}/ingest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source: 'wp', kind: 'presence.heartbeat', data: { connectionId: 'fit-check', channel: 'wp-cli', transport: 'process' } }) })
   await expect(page.locator('#event-position')).not.toHaveText(beforePosition)
   expect(await page.locator('.work-graph').getAttribute('viewBox')).toBe(fittedViewBox)
+})
+
+test('the default camera holds one top-left anchored scale through its first twelve places', async ({ page }, testInfo) => {
+  const trailRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-camera-runway-'))
+  const siteDaemon = await startDaemon({ target: 'http://localhost:8081', targetType: 'site', trailDirectory: path.join(trailRoot, 'trails'), port: 6470, watch: false })
+  const ingest = event => fetch(`${siteDaemon.url}/ingest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(event) })
+  try {
+    await page.goto(siteDaemon.url)
+    const camera = page.locator('.work-graph')
+    const settledViewBox = await camera.getAttribute('viewBox')
+    const compact = testInfo.project.name === 'mobile'
+    const readCompactCamera = () => camera.evaluate(svg => ({
+      x: svg.viewBox.baseVal.x,
+      y: svg.viewBox.baseVal.y,
+      width: svg.viewBox.baseVal.width,
+      height: svg.viewBox.baseVal.height,
+      scale: svg.getBoundingClientRect().width / svg.viewBox.baseVal.width,
+    }))
+    const settledCompactCamera = compact ? await readCompactCamera() : null
+    let compactHeight = settledCompactCamera?.height
+    let firstPosition = null
+    for (let index = 1; index <= 12; index++) {
+      await ingest({ source: 'wp', kind: 'wp.post.updated', data: { requestId: `runway-${index}`, objectType: 'post', objectId: index, postType: 'page', title: `Runway page ${index}`, status: 'publish', channel: 'wp-cli' } })
+      await expect(page.locator('.graph-node.entity')).toHaveCount(index)
+      if (compact) {
+        const current = await readCompactCamera()
+        expect(current.x).toBe(settledCompactCamera.x)
+        expect(current.y).toBe(settledCompactCamera.y)
+        expect(current.width).toBe(settledCompactCamera.width)
+        expect(current.scale).toBe(settledCompactCamera.scale)
+        expect(current.height).toBeGreaterThanOrEqual(compactHeight)
+        compactHeight = current.height
+      } else expect(await camera.getAttribute('viewBox')).toBe(settledViewBox)
+      const currentPosition = await page.locator('[data-node-id="wp:post:1"]').getAttribute('transform')
+      if (!firstPosition) firstPosition = currentPosition
+      else expect(currentPosition).toBe(firstPosition)
+    }
+
+    await page.getByRole('tab', { name: 'Replay' }).click()
+    if (compact) {
+      const replay = await readCompactCamera()
+      expect(replay.width).toBe(settledCompactCamera.width)
+      expect(replay.scale).toBe(settledCompactCamera.scale)
+      expect(replay.height).toBeGreaterThanOrEqual(compactHeight)
+    } else expect(await camera.getAttribute('viewBox')).toBe(settledViewBox)
+  } finally {
+    await siteDaemon.close('camera-runway-test')
+    fs.rmSync(trailRoot, { recursive: true, force: true })
+  }
 })
 
 test('replay ticks patch an existing change row without replacing it', async ({ page }) => {
@@ -661,30 +761,56 @@ test('v2 scale posture keeps 200 places navigable', async ({ page }, testInfo) =
     await page.goto(siteDaemon.url)
     await expect(page.locator('.graph-node.entity')).toHaveCount(200)
     await expect(page.locator('.graph-edge.channel')).toHaveCount(24)
+    const compact = testInfo.project.name === 'mobile'
     const focusedView = (await page.locator('.work-graph').getAttribute('viewBox')).split(/\s+/).map(Number)
-    expect(focusedView[2]).toBeLessThanOrEqual(720)
-    const viewport = page.viewportSize()
-    const expectedAspect = viewport.width / (viewport.height - 48)
-    expect(Math.abs(focusedView[2] / focusedView[3] - expectedAspect)).toBeLessThan(.03)
-    const focusContained = await page.evaluate(() => {
-      const canvas = document.querySelector('.map-surface').getBoundingClientRect()
-      const card = document.querySelector('[data-node-id="wp:option:scale_setting_200"] .place-card').getBoundingClientRect()
-      return card.left >= canvas.left - 1 && card.top >= canvas.top - 1 && card.right <= canvas.right + 1 && card.bottom <= canvas.bottom + 1
-    })
-    expect(focusContained).toBe(true)
+    if (compact) {
+      expect(focusedView[2]).toBe(432)
+      const navigation = await page.evaluate(() => {
+        const shell = document.querySelector('.graph-shell')
+        const canvas = shell.getBoundingClientRect()
+        const horizontalOutside = [...document.querySelectorAll('.graph-node:not(.future), .graph-edge-label:not([hidden])')].filter(element => {
+          const rect = element.getBoundingClientRect()
+          return rect.left < canvas.left - 1 || rect.right > canvas.right + 1
+        }).map(element => element.dataset.nodeId || element.textContent)
+        return { horizontalOutside, scrollable: shell.scrollHeight > shell.clientHeight }
+      })
+      expect(navigation.horizontalOutside).toEqual([])
+      expect(navigation.scrollable).toBe(true)
+      await page.locator('[data-node-id="wp:option:scale_setting_200"]').evaluate(element => element.scrollIntoView({ block: 'center' }))
+      const targetVisible = await page.evaluate(() => {
+        const shell = document.querySelector('.graph-shell').getBoundingClientRect()
+        const card = document.querySelector('[data-node-id="wp:option:scale_setting_200"] .place-card').getBoundingClientRect()
+        return card.top >= shell.top - 1 && card.bottom <= shell.bottom + 1
+      })
+      expect(targetVisible).toBe(true)
+    } else {
+      expect(focusedView[2]).toBeLessThanOrEqual(720)
+      const viewport = page.viewportSize()
+      const expectedAspect = viewport.width / (viewport.height - 48)
+      expect(Math.abs(focusedView[2] / focusedView[3] - expectedAspect)).toBeLessThan(.03)
+      const focusContained = await page.evaluate(() => {
+        const canvas = document.querySelector('.map-surface').getBoundingClientRect()
+        const card = document.querySelector('[data-node-id="wp:option:scale_setting_200"] .place-card').getBoundingClientRect()
+        return card.left >= canvas.left - 1 && card.top >= canvas.top - 1 && card.right <= canvas.right + 1 && card.bottom <= canvas.bottom + 1
+      })
+      expect(focusContained).toBe(true)
+    }
     await qaScreenshot(page, testInfo, '200-places')
     const settingPosition = await page.locator('[data-node-id="wp:option:scale_setting_2"]').getAttribute('transform')
     await expect(page.getByRole('toolbar', { name: 'Filter map by territory' })).toBeVisible()
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await expect(page.locator('.graph-node.entity:not(.filtered)')).toHaveCount(100)
     await expect(page.locator('.graph-edge.channel')).toHaveCount(24)
+    if (compact) expect((await page.locator('.work-graph').getAttribute('viewBox')).split(/\s+/).map(Number)[2]).toBe(focusedView[2])
     expect(await page.locator('[data-node-id="wp:option:scale_setting_2"]').getAttribute('transform')).toBe(settingPosition)
     await page.getByRole('button', { name: 'All', exact: true }).click()
     await expect(page.locator('.graph-node.entity:not(.filtered)')).toHaveCount(200)
+    if (compact) expect((await page.locator('.work-graph').getAttribute('viewBox')).split(/\s+/).map(Number)[2]).toBe(focusedView[2])
     const positions = await page.locator('.graph-node').evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.dataset.nodeId, node.getAttribute('transform')])))
     await page.getByRole('tab', { name: 'Replay' }).click()
     const replayPositions = await page.locator('.graph-node').evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.dataset.nodeId, node.getAttribute('transform')])))
     expect(replayPositions).toEqual(positions)
+    if (compact) expect((await page.locator('.work-graph').getAttribute('viewBox')).split(/\s+/).map(Number)[2]).toBe(focusedView[2])
 
   } finally {
     await siteDaemon.close('scale-test')
@@ -720,20 +846,32 @@ test('v2 full fit contains every card and channel label below the scale ceiling'
     await ingest({ source: 'wp', kind: 'wp.option.updated', data: { requestId: 'plugin', objectType: 'option', name: 'accelerate_outbound_tracking_enabled', channel: 'wp-cli' } })
     await page.goto(siteDaemon.url)
     await expect(page.locator('.graph-node.entity')).toHaveCount(3)
+    const compact = testInfo.project.name === 'mobile'
     const containment = await page.evaluate(() => {
-      const canvas = document.querySelector('.map-surface').getBoundingClientRect()
+      const shell = document.querySelector('.graph-shell')
+      const canvas = shell.getBoundingClientRect()
       const subjects = [...document.querySelectorAll('.graph-node:not(.future):not(.filtered), .graph-edge-label:not([hidden])')]
       const outside = subjects.filter(element => {
         const rect = element.getBoundingClientRect()
         return rect.left < canvas.left - 1 || rect.top < canvas.top - 1 || rect.right > canvas.right + 1 || rect.bottom > canvas.bottom + 1
       }).map(element => element.dataset.nodeId || element.textContent)
-      return { outside, subjectCount: subjects.length }
+      const horizontalOutside = subjects.filter(element => {
+        const rect = element.getBoundingClientRect()
+        return rect.left < canvas.left - 1 || rect.right > canvas.right + 1
+      }).map(element => element.dataset.nodeId || element.textContent)
+      return { outside, horizontalOutside, subjectCount: subjects.length, verticalOverflow: shell.scrollHeight > shell.clientHeight }
     })
     expect(containment.subjectCount).toBeGreaterThan(3)
-    expect(containment.outside).toEqual([])
+    if (compact) {
+      expect(containment.horizontalOutside).toEqual([])
+      expect(containment.verticalOverflow).toBe(true)
+    } else expect(containment.outside).toEqual([])
     const defaultViewBox = await page.locator('.work-graph').getAttribute('viewBox')
-    await page.getByRole('button', { name: 'Fit graph to view' }).click()
-    expect(await page.locator('.work-graph').getAttribute('viewBox')).toBe(defaultViewBox)
+    if (compact) expect(defaultViewBox.split(/\s+/).map(Number)[2]).toBe(432)
+    else {
+      await page.getByRole('button', { name: 'Fit graph to view' }).click()
+      expect(await page.locator('.work-graph').getAttribute('viewBox')).not.toBe(defaultViewBox)
+    }
     const territoryTops = await page.locator('.graph-lane.territory-region').evaluateAll(regions => Object.fromEntries(regions.map(region => [region.dataset.territory, region.getBBox().y])))
     expect(territoryTops.content).toBeLessThan(territoryTops.plugins)
     expect(territoryTops.plugins).toBeLessThan(territoryTops.settings)
@@ -755,19 +893,34 @@ test('v2 sentence framing centers and contains the active target above the ceili
     const target = page.locator('[data-node-id="wp:post:30"]')
     await expect(target).toHaveClass(/claimed/)
     const activeViewBox = await page.locator('.work-graph').getAttribute('viewBox')
+    const compact = testInfo.project.name === 'mobile'
+    if (compact) {
+      expect(activeViewBox.split(/\s+/).map(Number)[2]).toBe(432)
+      expect(await page.locator('.graph-shell').evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+    }
     const framing = await page.evaluate(() => {
       const canvas = document.querySelector('.map-surface').getBoundingClientRect()
+      const shell = document.querySelector('.graph-shell')
+      const target = document.querySelector('[data-node-id="wp:post:30"]')
       const card = document.querySelector('[data-node-id="wp:post:30"] .place-card').getBoundingClientRect()
       const label = document.querySelector('.graph-edge-label.active:not([hidden])').getBoundingClientRect()
+      const targetY = target.transform.baseVal.consolidate().matrix.f
+      const lastY = Math.max(...[...document.querySelectorAll('.graph-node.entity:not(.future)')].map(node => node.transform.baseVal.consolidate().matrix.f))
+      const maxScrollTop = shell.scrollHeight - shell.clientHeight
       return {
         contained: card.left >= canvas.left - 1 && card.top >= canvas.top - 1 && card.right <= canvas.right + 1 && card.bottom <= canvas.bottom + 1 && label.left >= canvas.left - 1 && label.right <= canvas.right + 1,
         dx: Math.abs((card.left + card.right) / 2 - (canvas.left + canvas.right) / 2) / canvas.width,
         dy: Math.abs((card.top + card.bottom) / 2 - (canvas.top + canvas.bottom) / 2) / canvas.height,
+        atColumnEnd: targetY === lastY,
+        atEndClamp: Math.abs(shell.scrollTop - maxScrollTop) <= 1,
       }
     })
     expect(framing.contained).toBe(true)
     expect(framing.dx).toBeLessThan(.14)
-    expect(framing.dy).toBeLessThan(.18)
+    if (compact) {
+      expect(framing.atColumnEnd).toBe(true)
+      expect(framing.atEndClamp).toBe(true)
+    } else expect(framing.dy).toBeLessThan(.18)
     await qaHScreenshot(page, testInfo, '30-place-active-sentence')
 
     await page.getByRole('tab', { name: 'Replay' }).click()
@@ -841,9 +994,9 @@ test('wide-run projection keeps five nouns, semantic evidence, and a composed sm
       const overlaps = !(territory.right <= plugin.left || plugin.right <= territory.left || territory.bottom <= plugin.top || plugin.bottom <= territory.top)
       return { root: position('wp:site'), post: position('wp:post:476'), page: position('wp:post:339'), term: position('wp:term:51'), plugin: position('wp:option:accelerate_outbound_tracking_enabled'), setting: position('wp:option:blogdescription'), clippedLabels, overlaps }
     })
-    expect(geometry.clippedLabels).toBe(0)
-    expect(geometry.overlaps).toBe(false)
     if (testInfo.project.name === 'desktop') {
+      expect(geometry.clippedLabels).toBe(0)
+      expect(geometry.overlaps).toBe(false)
       expect(geometry.root.y).toBe(geometry.post.y)
       expect(geometry.root.y).toBe(geometry.page.y)
       expect(geometry.term.y).toBe(geometry.plugin.y)

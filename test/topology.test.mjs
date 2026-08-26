@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildSiteTopology, displayChannel, FULL_FIT_PLACE_LIMIT, groupTopologyChanges, INFERRED_CONFIRMATION_WINDOW_MS, layoutSiteTopology, OVERVIEW_IDLE_EDGE_LIMIT, resolveTopologyEntity, routeContainmentElbows, routeSiteTopologyEdges, siteCardHeight, topologyRunLabel, visibleTopologyEdges } from '../src/board/topology.mjs'
+import { buildSiteTopology, confirmationMatchLabel, displayChannel, FULL_FIT_PLACE_LIMIT, groupTopologyChanges, INFERRED_CONFIRMATION_WINDOW_MS, layoutSiteTopology, OVERVIEW_IDLE_EDGE_LIMIT, resolveTopologyEntity, routeContainmentElbows, routeSiteTopologyEdges, siteCardHeight, topologyRunLabel, visibleTopologyEdges } from '../src/board/topology.mjs'
 
 const event = (seq, kind, data = {}, source = kind.startsWith('wp.') || kind.startsWith('presence.') ? 'wp' : 'agent') => ({
   v: 1,
@@ -472,6 +472,59 @@ test('MCP inference never crosses its provisional 30-second window and objectles
   assert.deepEqual(objectless.edges.map(edge => [edge.from, edge.to, edge.channel, edge.flowState]), [['wp:site', 'wp:site', 'mcp', 'claimed']])
 })
 
+test('a bare MCP name pairs to one existing place by name and time', () => {
+  const events = [
+    event(1, 'wp.option.updated', { requestId: 'existing', objectType: 'option', name: 'blogdescription', channel: 'rest' }),
+    event(2, 'agent.action.declared', { requestId: 'json-rpc-name', correlationId: 'mcp-name', name: 'blogdescription', objectHintKeys: ['name'], summary: 'Called wp.update_option', channel: 'mcp' }, 'mcp'),
+    event(3, 'wp.option.updated', { requestId: 'wordpress-name', objectType: 'option', name: 'blogdescription', channel: 'rest' }),
+  ]
+  const changes = buildSiteTopology(events).nodes[0].changes
+  const paired = changes.find(change => change.requestId === 'json-rpc-name')
+
+  assert.equal(paired.status, 'confirmed')
+  assert.equal(paired.confirmationMatch, 'inferred-name-time')
+  assert.equal(confirmationMatchLabel(paired.confirmationMatch), 'Matched by name and time, not request ID')
+})
+
+test('an ambiguous bare MCP name pairs with no place and exposes the ambiguity', () => {
+  const events = [
+    event(1, 'wp.option.updated', { requestId: 'option-existing', objectType: 'option', name: 'shared-name', channel: 'rest' }),
+    event(2, 'wp.ability.registered', { requestId: 'ability-existing', ability: 'shared-name', channel: 'rest' }),
+    event(3, 'agent.action.declared', { requestId: 'json-rpc-ambiguous', correlationId: 'mcp-ambiguous', name: 'shared-name', objectHintKeys: ['name'], summary: 'Called wp.inspect', channel: 'mcp' }, 'mcp'),
+    event(4, 'wp.option.updated', { requestId: 'wordpress-ambiguous', objectType: 'option', name: 'shared-name', channel: 'rest' }),
+  ]
+  const topology = buildSiteTopology(events)
+  const effect = topology.nodes.find(node => node.id === 'wp:option:shared-name').changes.at(-1)
+
+  assert.equal(topology.nodes.some(node => node.changes.some(change => change.requestId === 'json-rpc-ambiguous')), false)
+  assert.equal(effect.claim, null)
+  assert.equal(effect.confirmationMatch, 'ambiguous-name')
+  assert.equal(confirmationMatchLabel(effect.confirmationMatch), 'Name matched multiple existing places; no declared claim was paired')
+
+  const typedTopology = buildSiteTopology([
+    ...events.slice(0, 2),
+    event(3, 'agent.action.declared', { requestId: 'json-rpc-typed', objectType: 'option', name: 'shared-name', objectHintKeys: ['name', 'objectType'], summary: 'Called wp.inspect', channel: 'mcp' }, 'mcp'),
+    event(4, 'wp.option.updated', { requestId: 'wordpress-typed', objectType: 'option', name: 'shared-name', channel: 'rest' }),
+  ])
+  const typed = typedTopology.nodes.find(node => node.id === 'wp:option:shared-name').changes.at(-1)
+  assert.equal(typed.requestId, 'json-rpc-typed')
+  assert.equal(typed.confirmationMatch, 'inferred-object-time')
+})
+
+test('a bare MCP name with no existing match remains unpaired', () => {
+  const events = [
+    event(1, 'wp.option.updated', { requestId: 'other-existing', objectType: 'option', name: 'blogname', channel: 'rest' }),
+    event(2, 'agent.action.declared', { requestId: 'json-rpc-missing', correlationId: 'mcp-missing', name: 'blogdescription', objectHintKeys: ['name'], summary: 'Called wp.update_option', channel: 'mcp' }, 'mcp'),
+    event(3, 'wp.option.updated', { requestId: 'wordpress-missing', objectType: 'option', name: 'blogdescription', channel: 'rest' }),
+  ]
+  const topology = buildSiteTopology(events)
+  const effect = topology.nodes.find(node => node.id === 'wp:option:blogdescription').changes[0]
+
+  assert.equal(topology.nodes.some(node => node.changes.some(change => change.requestId === 'json-rpc-missing')), false)
+  assert.equal(effect.claim, null)
+  assert.equal(effect.confirmationMatch, undefined)
+})
+
 test('a typed create claim is born in its final lane and gains identity on confirmation', () => {
   const events = [
     event(1, 'agent.action.declared', { requestId: 'create', objectType: 'post', channel: 'wp-cli', summary: 'Create a post' }),
@@ -585,10 +638,12 @@ test('v2 scale fixtures preserve nouns and coordinates while bounding overview e
   const options = { layoutSeed: { desktopWrapColumns: 4 } }
   const firstLayout = layoutSiteTopology(first, options)
   const finalLayout = layoutSiteTopology(final, options)
+  const compactLayout = layoutSiteTopology(final, { ...options, compact: true })
   const finalPositions = new Map(finalLayout.nodes.map(node => [node.id, [node.x, node.y]]))
 
   assert.equal(final.nodes.length, 200)
   for (const node of firstLayout.nodes) assert.deepEqual(finalPositions.get(node.id), [node.x, node.y])
+  assert.equal(new Set(compactLayout.nodes.map(node => node.x)).size, 1)
   assert.equal(FULL_FIT_PLACE_LIMIT, 24)
   const overviewEdges = visibleTopologyEdges(final.edges, final.nodes.length)
   assert.equal(overviewEdges.length, OVERVIEW_IDLE_EDGE_LIMIT)

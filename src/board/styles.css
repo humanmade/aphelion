@@ -135,7 +135,9 @@ svg { display: block; }
 .map-surface { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--canvas); }
 .component-flow { width: 100%; height: 100%; min-height: 0; overflow: hidden; }
 .graph-shell { position: relative; width: 100%; height: 100%; overflow: hidden; }
+.graph-shell.compact { overflow-x: hidden; overflow-y: auto; }
 .work-graph { position: absolute; inset: 0; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: visible; touch-action: none; cursor: grab; }
+.graph-shell.compact .work-graph { width: 100vw; height: auto; min-height: 100%; aspect-ratio: var(--compact-camera-aspect); touch-action: pan-y; }
 .work-graph:active { cursor: grabbing; }
 .graph-grid-dot { fill: oklch(28% 0 0 / .42); }
 .graph-grid-fill { fill: url(#graph-grid); }
@@ -179,7 +181,7 @@ svg { display: block; }
 @keyframes node-fade { from { opacity: 0; } }
 .graph-node.birth .place-card { animation: node-birth 500ms var(--ease-out) both; transform-origin: left top; }
 @keyframes node-birth { from { transform: scale(.965); } }
-.place-card-foreign { overflow: visible; }
+.place-card-foreign { overflow: visible; transition: height var(--motion-slow) var(--ease-out); }
 .place-card { width: 100%; height: 100%; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); transition: height var(--motion-slow) var(--ease-out), border-color var(--motion-slow) var(--ease), box-shadow var(--motion-slow) var(--ease), opacity var(--motion-slow) var(--ease); }
 .graph-node:hover .place-card, .graph-node:focus-visible .place-card, .graph-node.selected .place-card { border-color: var(--border-strong); }
 .graph-node.claimed .place-card, .graph-node.active .place-card { border-color: color-mix(in oklch, var(--declared) 35%, var(--border)); }
@@ -196,7 +198,7 @@ svg { display: block; }
 .app-shell:not([data-mode="live"])[data-playing="false"] .graph-edge.claimed,
 .app-shell:not([data-mode="live"])[data-playing="false"] .graph-node.claimed .place-dot,
 .app-shell:not([data-mode="live"])[data-playing="false"] .graph-node.active .place-dot { animation-play-state: paused; }
-.place-identity { min-height: 74px; padding: 12px 14px 11px; }
+.place-identity { min-height: 74px; padding: 12px 14px 11px; transition: min-height var(--motion-slow) var(--ease-out), padding var(--motion-slow) var(--ease-out); }
 .place-identity.without-state { min-height: 52px; }
 .graph-node.tombstone .place-card { border-color: color-mix(in oklch, var(--border) 70%, transparent); background: color-mix(in oklch, var(--surface) 72%, var(--canvas)); }
 .graph-node.tombstone .place-band { border-bottom-color: transparent; }
@@ -204,8 +206,10 @@ svg { display: block; }
 .graph-node.tombstone .place-name { display: block; overflow: hidden; color: var(--text-2); font: 500 12px/1.5 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .place-name { display: -webkit-box; overflow: hidden; color: var(--text); font-size: 15px; font-weight: 590; line-height: 1.35; letter-spacing: -.005em; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .place-state { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 1; color: var(--text-2); font: 13px/1.35 var(--mono); transition: opacity var(--motion-slow) var(--ease), transform var(--motion-slow) var(--ease-out); }
+.place-state.entering,
 .place-state.leaving { opacity: 0; transform: translateY(-2px); }
 .change-tail { opacity: 1; border-top: 1px solid color-mix(in oklch, var(--border) 55%, transparent); transition: opacity var(--motion-slow) var(--ease); }
+.change-tail.entering,
 .change-tail.leaving { opacity: 0; }
 .change-row { min-height: 29px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 5px 12px 5px 14px; border-top: 1px solid color-mix(in oklch, var(--border) 55%, transparent); opacity: 1; clip-path: inset(0); transform: translateY(0); transition: opacity var(--motion-slow) var(--ease), clip-path var(--motion-slow) var(--ease-out), transform var(--motion-slow) var(--ease-out); }
 .change-row:first-child { border-top: 0; }

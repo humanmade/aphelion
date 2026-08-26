@@ -1,6 +1,6 @@
 import { createProjection, reduceEvent, summarizeEvent } from '/assets/reducer.mjs'
 import { buildReplayIndex, projectReplay } from '/assets/replay.mjs'
-import { buildSiteTopology, displayChannel, FULL_FIT_PLACE_LIMIT, groupTopologyChanges, layoutSiteTopology, routeContainmentElbows, routeSiteTopologyEdges, siteCardHeight, topologyCameraFrames, topologyRunLabel, visibleTopologyEdges } from '/assets/topology.mjs'
+import { buildSiteTopology, confirmationMatchLabel, displayChannel, FULL_FIT_PLACE_LIMIT, groupTopologyChanges, layoutSiteTopology, routeContainmentElbows, routeSiteTopologyEdges, siteCardHeight, topologyCameraFrames, topologyRunLabel, visibleTopologyEdges } from '/assets/topology.mjs'
 
 // Graph layout and node interaction substantially adapt sodiumsun/agenttrail (MIT, snapshot 41454d4).
 
@@ -8,6 +8,11 @@ const $ = id => document.getElementById(id)
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const STANDARD_TRANSITION_MS = 300
 const SLOW_TRANSITION_MS = 500
+const SETTLED_CAMERA_PLACE_CAPACITY = 12
+const CAMERA_SCALE_STEP = 1.2
+const CAMERA_RUNWAY_PADDING = 56
+const COMPACT_CAMERA_COLUMN_WIDTH = 320 + CAMERA_RUNWAY_PADDING * 2
+const COMPACT_CAMERA_INITIAL_HEIGHT = 720
 const state = {
   mode: 'live',
   liveModel: createProjection(),
@@ -27,6 +32,8 @@ const state = {
   cameraBounds: null,
   cameraContext: null,
   userMovedCamera: false,
+  cameraScaleStep: 0,
+  cameraOverCeiling: false,
   territoryFilter: 'all',
   territoryFilterContext: null,
   fitFilteredOnRender: false,
@@ -355,7 +362,7 @@ function placeCard(item, height, model) {
   identity.append(name, stateLine)
   const tail = node('div', 'change-tail')
   card.append(band, identity, tail)
-  card.__aphelion = { type, icon, typeLabel, address, dot, band, identity, name, stateLine, tail, rows: new Map(), more: null }
+  card.__aphelion = { type, icon, typeLabel, address, dot, band, identity, name, stateLine, tail, rows: new Map(), more: null, sizeTier: null }
   patchPlaceCard(card, item, height, model)
   return card
 }
@@ -422,6 +429,13 @@ function transitionOut(element, complete) {
   element.addEventListener('transitionend', finish)
 }
 
+function transitionIn(element) {
+  cancelExit(element)
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  element.classList.add('entering')
+  requestAnimationFrame(() => element.classList.remove('entering'))
+}
+
 function showEvidenceUpdate(element) {
   if (state.renderDirection === 'none' || element.classList.contains('entering') || matchMedia('(prefers-reduced-motion: reduce)').matches) return
   element.classList.remove('updating')
@@ -441,6 +455,10 @@ function patchEvidenceText(element, value, key) {
 
 function patchPlaceCard(card, item, height, model) {
   const refs = card.__aphelion
+  const sizeTier = item.sizeTier || 'standard'
+  const previousSizeTier = refs.sizeTier
+  const sizeTierChanged = previousSizeTier !== null && previousSizeTier !== sizeTier
+  refs.sizeTier = sizeTier
   const type = placeType(item)
   if (refs.type !== type) {
     const nextIcon = placeIcon(type)
@@ -458,20 +476,24 @@ function patchPlaceCard(card, item, height, model) {
   const stateLine = cardStateLine(item)
   refs.identity.className = `place-identity${stateLine ? '' : ' without-state'}${item.sizeTier === 'tombstone' ? ' tombstone' : ''}`
   if (stateLine) {
+    const wasHidden = refs.stateLine.hidden
     cancelExit(refs.stateLine)
     refs.stateLine.hidden = false
     patchEvidenceText(refs.stateLine, stateLine, changeKey)
+    if (sizeTierChanged && wasHidden) transitionIn(refs.stateLine)
   } else if (!refs.stateLine.hidden) {
     const hide = () => { refs.stateLine.hidden = true }
-    if (state.renderDirection === 'backward') transitionOut(refs.stateLine, hide)
+    if (sizeTierChanged || state.renderDirection === 'backward') transitionOut(refs.stateLine, hide)
     else hide()
   }
 
   const rows = cardRows(item)
   const expanded = state.expandedTails.has(item.id)
   if (rows.length) {
+    const wasDetached = !refs.tail.isConnected
     cancelExit(refs.tail)
-    if (!refs.tail.isConnected) card.append(refs.tail)
+    if (wasDetached) refs.identity.after(refs.tail)
+    if (sizeTierChanged && wasDetached) transitionIn(refs.tail)
   }
   refs.tail.dataset.expanded = String(expanded)
   const visibleRows = expanded ? rows : rows.slice(0, 3)
@@ -522,7 +544,7 @@ function patchPlaceCard(card, item, height, model) {
     refs.more = null
   }
   if (!rows.length && refs.tail.isConnected) {
-    if (state.renderDirection === 'backward') transitionOut(refs.tail, () => refs.tail.remove())
+    if (sizeTierChanged || state.renderDirection === 'backward') transitionOut(refs.tail, () => refs.tail.remove())
     else refs.tail.remove()
   }
   card.style.height = `${height}px`
@@ -540,16 +562,91 @@ function resetCamera(context = null) {
   state.cameraBounds = null
   state.cameraContext = context
   state.userMovedCamera = false
+  state.cameraScaleStep = 0
+  state.cameraOverCeiling = false
 }
 
-function updateCamera() {
+function cameraViewBox(frame) {
+  return `${frame.x} ${frame.y} ${frame.width} ${frame.height}`
+}
+
+function updateCamera({ animate = false } = {}) {
   const graph = state.graph
   if (!graph || !state.camera) return
   const { x, y, width, height } = state.camera
-  graph.svg.setAttribute('viewBox', `${x} ${y} ${width} ${height}`)
+  if (graph.shell.classList.contains('compact')) graph.svg.style.setProperty('--compact-camera-aspect', `${width} / ${height}`)
+  else graph.svg.style.removeProperty('--compact-camera-aspect')
   setSvgAttributes(graph.grid, { x, y, width, height })
   const fittedWidth = Math.max(1, state.cameraBounds?.width || width)
   graph.zoomValue.textContent = `${Math.round(fittedWidth / width * 100)}%`
+  const target = cameraViewBox(state.camera)
+  if (graph.cameraAnimationFrame && graph.cameraAnimationTarget === target) return
+  if (graph.cameraAnimationFrame) cancelAnimationFrame(graph.cameraAnimationFrame)
+  graph.cameraAnimationFrame = null
+  graph.cameraAnimationTarget = null
+  const previous = (graph.svg.getAttribute('viewBox') || '').split(/\s+/).map(Number)
+  if (!animate || previous.length !== 4 || previous.some(value => !Number.isFinite(value)) || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    graph.svg.setAttribute('viewBox', target)
+    return
+  }
+  const next = [x, y, width, height]
+  const startedAt = performance.now()
+  graph.cameraAnimationTarget = target
+  const tick = now => {
+    const progress = Math.min(1, (now - startedAt) / SLOW_TRANSITION_MS)
+    const eased = 1 - (1 - progress) ** 3
+    graph.svg.setAttribute('viewBox', previous.map((value, index) => value + (next[index] - value) * eased).join(' '))
+    if (progress < 1) graph.cameraAnimationFrame = requestAnimationFrame(tick)
+    else {
+      graph.svg.setAttribute('viewBox', target)
+      graph.cameraAnimationFrame = null
+      graph.cameraAnimationTarget = null
+    }
+  }
+  graph.cameraAnimationFrame = requestAnimationFrame(tick)
+}
+
+function settledCameraFrame({ compact, aspect, nodeW, nodeH, gapX, gapY, padX, padY }) {
+  if (compact) return {
+    x: padX - CAMERA_RUNWAY_PADDING,
+    y: padY - CAMERA_RUNWAY_PADDING,
+    width: COMPACT_CAMERA_COLUMN_WIDTH,
+    height: COMPACT_CAMERA_INITIAL_HEIGHT,
+  }
+  const columns = 4
+  const rows = Math.ceil(SETTLED_CAMERA_PLACE_CAPACITY / columns)
+  const x = padX - CAMERA_RUNWAY_PADDING
+  const y = padY - CAMERA_RUNWAY_PADDING
+  const contentRight = padX + nodeW + gapX + columns * nodeW + (columns - 1) * gapX
+  const firstRowY = padY
+  const contentBottom = firstRowY + rows * nodeH + Math.max(0, rows - 1) * gapY
+  let width = contentRight + CAMERA_RUNWAY_PADDING - x
+  let height = contentBottom + CAMERA_RUNWAY_PADDING - y
+  if (width / height > aspect) height = width / aspect
+  else width = height * aspect
+  return { x, y, width, height }
+}
+
+function quantizedCameraFrame(base, nodes, metrics, nodeW) {
+  const right = Math.max(base.x, ...nodes.map(item => item.x + nodeW)) + CAMERA_RUNWAY_PADDING
+  const bottom = Math.max(base.y, ...nodes.map(item => item.y + (metrics[item.id]?.h || 104))) + CAMERA_RUNWAY_PADDING
+  const requiredScale = Math.max(1, (right - base.x) / base.width, (bottom - base.y) / base.height)
+  let step = state.cameraScaleStep
+  while (CAMERA_SCALE_STEP ** step < requiredScale) step++
+  return { step, frame: { ...base, width: base.width * CAMERA_SCALE_STEP ** step, height: base.height * CAMERA_SCALE_STEP ** step } }
+}
+
+function extendedCompactCameraFrame(base, nodes, metrics) {
+  const contentBottom = Math.max(base.y + base.height, ...nodes.map(item => item.y + (metrics[item.id]?.h || 104) + CAMERA_RUNWAY_PADDING))
+  return { ...base, height: contentBottom - base.y }
+}
+
+function centerCompactTarget(graph, targetId) {
+  const card = graph.nodeElements.get(targetId)?.card
+  if (!card) return
+  const shellBounds = graph.shell.getBoundingClientRect()
+  const cardBounds = card.getBoundingClientRect()
+  graph.shell.scrollTop += (cardBounds.top + cardBounds.bottom - shellBounds.top - shellBounds.bottom) / 2
 }
 
 function syncGraphPlaybackMotion() {
@@ -647,6 +744,7 @@ function ensureGraphShell(flow) {
   svg.addEventListener('pointerup', () => { graph.pan = null })
   svg.addEventListener('pointercancel', () => { graph.pan = null })
   svg.addEventListener('wheel', event => {
+    if (graph.shell.classList.contains('compact') && !event.ctrlKey) return
     event.preventDefault()
     event.stopPropagation()
     zoom(event.deltaY < 0 ? .9 : 1.1)
@@ -689,6 +787,7 @@ function createContainmentElement(relation) {
 function createNodeElement(item, nodeW, height, model) {
   const group = svgNode('g', { 'data-node-id': item.id })
   const foreign = svgNode('foreignObject', { class: 'place-card-foreign', x: 0, y: 0, width: nodeW, height })
+  foreign.style.height = `${height}px`
   const card = placeCard(item, height, model)
   foreign.append(card)
   const inPort = svgNode('circle', { class: 'graph-port', cx: 0, cy: 15, r: 4 })
@@ -838,6 +937,7 @@ function renderComponents(model, topology = currentTopology(model)) {
   graph.controls.hidden = false
 
   const compact = window.innerWidth <= 680
+  graph.shell.classList.toggle('compact', compact)
   const flowWidth = Math.max(320, flow.clientWidth || 1440)
   const flowHeight = Math.max(360, flow.clientHeight || window.innerHeight - 48)
   const nodeW = compact ? Math.min(320, Math.max(280, flowWidth - 48)) : 320
@@ -892,7 +992,7 @@ function renderComponents(model, topology = currentTopology(model)) {
         button.dataset.territory = territory
         button.addEventListener('click', () => {
           state.territoryFilter = button.dataset.territory
-          state.fitFilteredOnRender = true
+          state.fitFilteredOnRender = !graph.shell.classList.contains('compact')
           render()
         })
         graph.filters.append(button)
@@ -1019,7 +1119,8 @@ function renderComponents(model, topology = currentTopology(model)) {
     const becameVisible = entry.future && !item.future
     entry.future = item.future
     setSvgAttributes(group, { class: classes, 'data-node-kind': item.kind, 'data-node-group': item.group, 'data-territory': item.territory, 'data-parent-id': item.parentId, 'data-owner-plugin': item.ownerPlugin?.id, 'data-size-tier': item.sizeTier, 'data-flow-state': flowClass, transform: `translate(${item.x} ${item.y})`, tabindex: item.future ? null : 0, role: item.future ? null : 'button', 'aria-hidden': item.future ? true : null, 'aria-label': item.future ? null : `Inspect ${item.title}` })
-    setSvgAttributes(entry.foreign, { width: nodeW, height })
+    setSvgAttributes(entry.foreign, { width: nodeW })
+    if (entry.foreign.style.height !== `${height}px`) entry.foreign.style.height = `${height}px`
     patchPlaceCard(entry.card, item, height, model)
     entry.inPort.hidden = Boolean(item.topologyRoot)
     setSvgAttributes(entry.inPort, { class: `graph-port${flowClass === 'live' ? ' live' : ''}` })
@@ -1041,11 +1142,37 @@ function renderComponents(model, topology = currentTopology(model)) {
     state.userMovedCamera = true
     state.fitFilteredOnRender = false
   }
+  let animateCamera = false
+  let compactSentenceTarget = null
   if (!state.userMovedCamera) {
-    if (cameraFrames.mode === 'full') state.camera = { ...cameraFrames.full }
-    else if (!state.camera || cameraFrames.focusEdge?.active) state.camera = { ...(cameraFrames.sentence || cameraFrames.full) }
+    const aspect = window.innerWidth / Math.max(1, window.innerHeight - 48)
+    const settled = settledCameraFrame({ compact, aspect, nodeW, nodeH: layoutNodeH, gapX, gapY, padX, padY })
+    if (compact) {
+      const initializing = !state.camera
+      const extended = extendedCompactCameraFrame(settled, displayedNodes, metrics)
+      state.camera = { ...extended, height: Math.max(state.camera?.height || 0, extended.height) }
+      state.cameraScaleStep = 0
+      state.cameraOverCeiling = cameraFrames.mode === 'sentence'
+      if (initializing && state.cameraOverCeiling) compactSentenceTarget = cameraFrames.target?.id || null
+    } else {
+      const quantized = quantizedCameraFrame(settled, displayedNodes, metrics, nodeW)
+      if (!state.camera) {
+        state.cameraScaleStep = quantized.step
+        state.cameraOverCeiling = cameraFrames.mode === 'sentence'
+        state.camera = { ...(cameraFrames.mode === 'sentence' ? cameraFrames.sentence : quantized.frame) }
+      } else if (!state.cameraOverCeiling && cameraFrames.mode === 'sentence') {
+        state.cameraOverCeiling = true
+        state.camera = { ...cameraFrames.sentence }
+        animateCamera = true
+      } else if (!state.cameraOverCeiling && quantized.step > state.cameraScaleStep) {
+        state.cameraScaleStep = quantized.step
+        state.camera = { ...quantized.frame }
+        animateCamera = true
+      }
+    }
   }
-  updateCamera()
+  updateCamera({ animate: animateCamera })
+  if (compactSentenceTarget) centerCompactTarget(graph, compactSentenceTarget)
 }
 
 function inspectorSection(title) {
@@ -1081,7 +1208,7 @@ function inspectorChanges(changes, model) {
       ['Claim', change.claim?.summary || 'No declared claim'],
       ['Confirmation', change.confirmation?.summary || (change.status === 'in-flight' ? 'Awaiting WordPress' : 'No confirmation')],
       ['Evidence', change.confirmations?.map(item => item.kind).join('\n')],
-      ['Confirmation match', change.confirmationMatch === 'inferred-object-time' ? 'Matched by object and time, not request ID' : null],
+      ['Confirmation match', confirmationMatchLabel(change.confirmationMatch)],
       ['Name at this change', change.state?.title || change.confirmation?.state?.title],
       ['Channel', displayChannel(change.channel)],
       ['Transport', change.transport || change.confirmation?.transport || change.claim?.transport],

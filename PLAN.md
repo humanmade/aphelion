@@ -68,6 +68,12 @@ files: [src/board/**]
   from: member-evidence QA
 - [x] Label bounded object-and-time MCP confirmation inference in evidence {#board-mcp-inference}
   from: DEC-010
+- [x] Anchor the default camera to assumed growth and quantize scale changes beyond its initial capacity {#board-camera-runway}
+  from: movement doctrine
+- [x] Glide reversible tombstone compaction without replacing its durable place {#board-tombstone-motion}
+  from: motion eval
+- [x] Infer bare-name MCP confirmations only against one unambiguous existing place {#board-mcp-name-inference}
+  from: DEC-010
 
 ## Replay any session {#replay}
 tech: scrub UI over trail; sparse snapshot index for seeking

@@ -365,9 +365,28 @@ function stateData(event) {
     commentStatus: data.commentStatus || data.status || null,
     objectType: data.objectType || data.type || null,
     objectId: data.objectId ?? data.id ?? null,
+    name: data.name ?? null,
     objectHintKeys: Array.isArray(data.objectHintKeys) ? data.objectHintKeys : [],
     memberDetail,
   }
+}
+
+function bareNameHint(event) {
+  const data = event?.data || {}
+  if (!text(data.name) || text(data.objectType || data.type)) return null
+  if (data.objectId !== undefined || data.id !== undefined) return null
+  if (!Array.isArray(data.objectHintKeys) || data.objectHintKeys.length !== 1) return null
+  const hintKey = text(data.objectHintKeys[0]).split('.').at(-1)?.replace(/\[\]$/, '').toLowerCase()
+  if (!['name', 'key'].includes(hintKey)) return null
+  return text(data.name)
+}
+
+export function confirmationMatchLabel(value) {
+  return ({
+    'inferred-object-time': 'Matched by object and time, not request ID',
+    'inferred-name-time': 'Matched by name and time, not request ID',
+    'ambiguous-name': 'Name matched multiple existing places; no declared claim was paired',
+  })[value] || null
 }
 
 function memberFamily(item) {
@@ -509,7 +528,9 @@ function changeRecords(history, sessionEnded = false) {
         Object.assign(inferred, {
           confirmation,
           confirmations: [confirmation],
-          confirmationMatch: 'inferred-object-time',
+          confirmationMatch: inferred.state?.name && !inferred.state?.objectType && inferred.state?.objectId === null
+            ? 'inferred-name-time'
+            : 'inferred-object-time',
           verb: observedVerb(item),
           status: 'confirmed',
           seq: item.seq,
@@ -527,6 +548,7 @@ function changeRecords(history, sessionEnded = false) {
         claim,
         confirmation,
         confirmations: [confirmation],
+        confirmationMatch: item.pairingAmbiguity ? 'ambiguous-name' : undefined,
         verb: observedVerb(item),
         status: 'confirmed',
         seq: item.seq,
@@ -652,6 +674,7 @@ function analyze(events, requestTargets, topologyVersion = 1) {
   const entityOrder = []
   const edges = new Map()
   const requestStates = new Map()
+  const ambiguousNameClaims = []
   let currentTargets = []
   let currentEdgeKey = null
 
@@ -700,10 +723,15 @@ function analyze(events, requestTargets, topologyVersion = 1) {
 
   for (const event of events) {
     const classification = topologyEventClass(event)
+    const nameHint = classification === 'declared' ? bareNameHint(event) : null
+    const nameMatches = nameHint ? [...entities.values()].filter(entity => entity.identity === nameHint) : []
     const objectlessTapClaim = classification === 'declared'
       && Array.isArray(event.data?.objectHintKeys)
       && !resolveTopologyEntity(event)
-    const eventTargets = objectlessTapClaim ? ['wp:site'] : targetsForEvent(event, requestTargets)
+    if (nameMatches.length > 1) ambiguousNameClaims.push({ name: nameHint, seq: event.seq, ts: event.ts, candidateCount: nameMatches.length })
+    const eventTargets = nameMatches.length === 1
+      ? [nameMatches[0].key]
+      : objectlessTapClaim ? ['wp:site'] : targetsForEvent(event, requestTargets)
     currentEdgeKey = null
     const id = requestId(event)
     const request = ensureRequest(id)
@@ -754,6 +782,9 @@ function analyze(events, requestTargets, topologyVersion = 1) {
           }
         }
         entity.summary = eventSummary(event)
+        const pairingAmbiguity = classification === 'observed' ? [...ambiguousNameClaims].reverse().find(claim => claim.name === entity.identity
+          && event.ts >= claim.ts
+          && event.ts - claim.ts <= INFERRED_CONFIRMATION_WINDOW_MS) : null
         entity.history.push({
           seq: event.seq,
           ts: event.ts,
@@ -770,6 +801,7 @@ function analyze(events, requestTargets, topologyVersion = 1) {
           },
           rawKind: event.data?.rawKind || null,
           adapter: event.data?.adapter || null,
+          pairingAmbiguity,
         })
         if (classification === 'declared') entity.declaredCount++
         if (classification === 'observed') entity.observedCount++
@@ -1132,7 +1164,6 @@ function layoutContainmentTopology(topology, options = {}) {
   const gapY = options.gapY ?? (compact ? 28 : 24)
   const columns = compact ? 1 : Math.max(1, Number(options.layoutSeed?.desktopWrapColumns || 4))
   const nodeHeights = options.nodeHeights || {}
-  const laneStartX = padX + nodeW + gapX
   const columnStep = nodeW + gapX
   const rowStep = nodeH + Math.max(gapY, 68)
   const placed = [{ ...topology.root, x: padX, y: padY, depth: 0 }]
@@ -1150,7 +1181,7 @@ function layoutContainmentTopology(topology, options = {}) {
 
   if (compact) {
     let row = 1
-    for (const territory of TERRITORY_ORDER) for (const node of territoryNodes.get(territory) || []) placeAt(node, territory, row++, 0, laneStartX)
+    for (const territory of TERRITORY_ORDER) for (const node of territoryNodes.get(territory) || []) placeAt(node, territory, row++, 0, padX)
   } else {
     const content = territoryNodes.get('content') || []
     const worldColumns = columns + 1
