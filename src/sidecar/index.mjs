@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 import { redactPayload } from '../trail/redact.mjs'
 import { adaptAccelerateEvent } from '../adapters/accelerate.mjs'
+import { observerVersionStatus, SHIPPED_OBSERVER_VERSION } from '../observer/version.mjs'
 
 const WP_PROBE_ARG = "--exec=define('APHELION_OBSERVER_PROBE', true);"
 
@@ -53,6 +54,10 @@ async function wpSnapshot(command) {
   return snapshot
 }
 
+async function wpObserverVersion(command) {
+  return runWp(command, [WP_PROBE_ARG, 'eval', "echo defined('APHELION_AUDIT_OBSERVER_VERSION') ? APHELION_AUDIT_OBSERVER_VERSION : '';" ])
+}
+
 // Mirror the audit mu-plugin's noise predicate: transient/cron/cache
 // bookkeeping churn never becomes runtime drift or a place on the map.
 function isBookkeepingOption(name) {
@@ -86,7 +91,23 @@ export function startSidecar(options) {
   let polling = false
   let lastWpHeartbeat = 0
   let identityPending = false
+  let observerVersionSignature = null
   const heartbeats = new Map()
+
+  const reportObserverVersion = (reported, eventOptions) => {
+    const report = observerVersionStatus(reported, options.expectedObserverVersion || SHIPPED_OBSERVER_VERSION)
+    const signature = `${report.status}:${report.reportedVersion || ''}:${report.expectedVersion}`
+    if (signature === observerVersionSignature) return
+    observerVersionSignature = signature
+    emit('sidecar', 'runtime.observer.version', {
+      ...report,
+      channel: 'runtime',
+      transport: options.transport || 'process',
+    }, eventOptions)
+    if (report.status !== 'current') {
+      ;(options.warn || console.warn)(`[aphelion] observer out of date: expected ${report.expectedVersion}, reported ${report.reportedVersion || 'no version'}; some activity may not be recorded`)
+    }
+  }
 
   const emitWithAdapter = (source, kind, data, eventOptions) => {
     const raw = emit(source, kind, data, eventOptions)
@@ -98,6 +119,7 @@ export function startSidecar(options) {
     try {
       const record = JSON.parse(line)
       if (!record.kind || !record.data) throw new Error('missing kind/data')
+      if ('observerVersion' in record.data) reportObserverVersion(record.data.observerVersion, { ts: record.ts })
       if (record.kind === 'presence.heartbeat') {
         const key = String(record.data.connectionId || record.data.channel || 'wordpress-heartbeat')
         const previous = heartbeats.get(key)
@@ -126,6 +148,8 @@ export function startSidecar(options) {
     polling = true
     try {
       const snapshot = await wpSnapshot(options.wpCommand)
+      let observerVersion = null
+      try { observerVersion = await wpObserverVersion(options.wpCommand) } catch {}
       if (stopped) return
       const recovering = wpFailed
       if (recovering) {
@@ -155,6 +179,7 @@ export function startSidecar(options) {
         lastWpHeartbeat = Date.now()
       }
       const firstBaseline = !baselineWritten
+      if (firstBaseline || identityPending) reportObserverVersion(observerVersion)
       if (firstBaseline) {
         for (const [name, value] of Object.entries(snapshot)) previousOptions.set(name, { fingerprint: fingerprint(value) })
         emit('sidecar', 'runtime.baseline', { ...snapshotSummary(snapshot), channel: 'wp-cli', transport: options.transport || 'process' })

@@ -5,6 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { adaptAccelerateEvent, projectEvents, readTrail, startDaemon } from '../src/index.mjs'
 import { buildSiteTopology } from '../src/board/topology.mjs'
+import { SHIPPED_OBSERVER_VERSION } from '../src/observer/version.mjs'
 import { journeyEvents, wordpressJourneys } from './fixtures/wordpress-journeys.mjs'
 
 function sequenced(events) {
@@ -133,6 +134,9 @@ test('Accelerate adapter adds semantic meaning while retaining the raw WordPress
 
 test('audit mu-plugin remains an observer and exposes the WordPress context needed by fixtures', () => {
   const php = fs.readFileSync(new URL('../src/mu-plugin/aphelion-audit.php', import.meta.url), 'utf8')
+  assert.match(php, /APHELION_AUDIT_OBSERVER_VERSION/)
+  assert.match(php, /'observerVersion'\s*=>\s*APHELION_AUDIT_OBSERVER_VERSION/)
+  assert.equal(php.match(/define\( 'APHELION_AUDIT_OBSERVER_VERSION', '([^']+)' \)/)?.[1], SHIPPED_OBSERVER_VERSION)
   assert.match(php, /pre_post_update/)
   assert.match(php, /add_action\( 'pre_post_update', \[ \$this, 'post_before_update' \], 10, 2 \)/)
   assert.match(php, /function post_before_update\( int \$post_id, array \$data \)/)
@@ -140,6 +144,16 @@ test('audit mu-plugin remains an observer and exposes the WordPress context need
   assert.match(php, /_yoast_wpseo_/)
   assert.match(php, /wp_after_execute_ability/)
   assert.match(php, /wp_ability_invoked/)
+  assert.match(php, /add_action\( 'user_register', \[ \$this, 'user_created' \], 10, 2 \)/)
+  assert.match(php, /add_action\( 'deleted_user', \[ \$this, 'user_deleted' \], 10, 3 \)/)
+  assert.match(php, /add_action\( 'set_user_role', \[ \$this, 'user_role_changed' \], 10, 3 \)/)
+  assert.match(php, /add_action\( 'wp_insert_comment', \[ \$this, 'comment_created' \], 10, 2 \)/)
+  assert.match(php, /add_action\( 'transition_comment_status', \[ \$this, 'comment_status_changed' \], 10, 3 \)/)
+  assert.match(php, /add_action\( 'deleted_comment', \[ \$this, 'comment_deleted' \], 10, 2 \)/)
+  assert.match(php, /get_post\( \(int\) \$comment->comment_post_ID \)/)
+  assert.match(php, /'postType'\s*=>/)
+  assert.match(php, /'postTitle'\s*=>/)
+  assert.doesNotMatch(php, /user_email|user_pass|comment_content|comment_author_email|comment_author_IP/)
   assert.doesNotMatch(php, /\b(?:wp_insert_post|wp_update_post|update_option|delete_option)\s*\(/)
 })
 
@@ -152,6 +166,7 @@ test('WP-CLI sidecar retries after disconnect and fingerprints settings instead 
     "const marker = process.env.APHELION_FAKE_WP_MARKER",
     "if (!process.argv.some(arg => arg.includes('APHELION_OBSERVER_PROBE'))) { console.error('observer probe marker missing'); process.exit(2) }",
     "if (!marker || !fs.existsSync(marker)) { console.error('fixture disconnected'); process.exit(1) }",
+    "if (process.argv.includes('eval')) { process.stdout.write('0.1.0'); process.exit(0) }",
     "const value = fs.readFileSync(marker, 'utf8').trim()",
     "const name = process.argv[process.argv.indexOf('get') + 1]",
     "process.stdout.write(JSON.stringify(name === 'blogname' ? value : 'stable'))",
@@ -210,6 +225,7 @@ test('WP-CLI sidecar retries after disconnect and fingerprints settings instead 
 test('WP-CLI sidecar re-observes site identity after idle session rotation', async t => {
   const root = temporary(t)
   const script = [
+    "if (process.argv.includes('eval')) { process.stdout.write('0.1.0'); process.exit(0) }",
     "const name = process.argv[process.argv.indexOf('get') + 1]",
     "process.stdout.write(JSON.stringify(name === 'blogname' ? 'Accelerate Demo' : 'stable'))",
   ].join(';')
@@ -238,6 +254,39 @@ test('WP-CLI sidecar re-observes site identity after idle session rotation', asy
 
   assert.equal(buildSiteTopology(secondEvents).root.title, 'Accelerate Demo')
   assert.ok(secondEvents.some(event => event.kind === 'runtime.site.identity' && event.source === 'sidecar'))
+  await daemon.close('test')
+})
+
+test('WP-CLI sidecar records and warns when the shipped observer is out of date', async t => {
+  const root = temporary(t)
+  const warnings = []
+  const script = [
+    "if (process.argv.includes('eval')) { process.stdout.write('0.0.9'); process.exit(0) }",
+    "const name = process.argv[process.argv.indexOf('get') + 1]",
+    "process.stdout.write(JSON.stringify(name === 'blogname' ? 'Accelerate Demo' : 'stable'))",
+  ].join(';')
+  const daemon = await startDaemon({
+    target: 'http://localhost:8081',
+    targetType: 'site',
+    trailDirectory: path.join(root, 'trails'),
+    wpCommand: [process.execPath, '-e', script, '--'],
+    sidecarInterval: 250,
+    warn: message => warnings.push(message),
+    port: 6201,
+    watch: false,
+  })
+  t.after(() => daemon.close('test-cleanup'))
+
+  const observed = await waitForTrailEvent(
+    daemon.trailPath,
+    event => event.kind === 'runtime.observer.version',
+    'the observer version handshake',
+  )
+
+  assert.equal(observed.data.reportedVersion, '0.0.9')
+  assert.equal(observed.data.expectedVersion, '0.1.0')
+  assert.equal(observed.data.status, 'outdated')
+  assert.ok(warnings.some(message => message.includes('observer out of date') && message.includes('some activity may not be recorded')))
   await daemon.close('test')
 })
 

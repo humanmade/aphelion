@@ -11,6 +11,7 @@ import { classifyHookEvent } from './hooks.mjs'
 import { watchRepository } from './watcher.mjs'
 import { scanWordPress } from '../wordpress/scan.mjs'
 import { startSidecar } from '../sidecar/index.mjs'
+import { SHIPPED_OBSERVER_VERSION } from '../observer/version.mjs'
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const PUBLIC_ROOT = path.join(PACKAGE_ROOT, 'public')
@@ -181,7 +182,7 @@ export async function startDaemon(options = {}) {
     }
   })
   const stopSidecar = options.auditLog || options.debugLog || options.wpCommand?.length
-    ? startSidecar({ emit, auditLog: options.auditLog, debugLog: options.debugLog, wpCommand: options.wpCommand, transport: options.wpTransport, intervalMs: options.sidecarInterval })
+    ? startSidecar({ emit, auditLog: options.auditLog, debugLog: options.debugLog, wpCommand: options.wpCommand, transport: options.wpTransport, intervalMs: options.sidecarInterval, expectedObserverVersion: SHIPPED_OBSERVER_VERSION, warn: options.warn })
     : () => {}
 
   const server = http.createServer(async (request, response) => {

@@ -9,6 +9,10 @@
 
 defined( 'ABSPATH' ) || exit;
 
+if ( ! defined( 'APHELION_AUDIT_OBSERVER_VERSION' ) ) {
+	define( 'APHELION_AUDIT_OBSERVER_VERSION', '0.1.0' );
+}
+
 final class Aphelion_Audit_Observer {
 	/** @var string */
 	private $request_id;
@@ -37,6 +41,12 @@ final class Aphelion_Audit_Observer {
 		add_action( 'created_term', [ $this, 'term_created' ], 10, 3 );
 		add_action( 'edited_term', [ $this, 'term_updated' ], 10, 3 );
 		add_action( 'delete_term', [ $this, 'term_deleted' ], 10, 5 );
+		add_action( 'user_register', [ $this, 'user_created' ], 10, 2 );
+		add_action( 'deleted_user', [ $this, 'user_deleted' ], 10, 3 );
+		add_action( 'set_user_role', [ $this, 'user_role_changed' ], 10, 3 );
+		add_action( 'wp_insert_comment', [ $this, 'comment_created' ], 10, 2 );
+		add_action( 'transition_comment_status', [ $this, 'comment_status_changed' ], 10, 3 );
+		add_action( 'deleted_comment', [ $this, 'comment_deleted' ], 10, 2 );
 		add_action( 'activated_plugin', [ $this, 'plugin_activated' ], 10, 2 );
 		add_action( 'deactivated_plugin', [ $this, 'plugin_deactivated' ], 10, 2 );
 		add_filter( 'rest_request_after_callbacks', [ $this, 'rest_completed' ], 10, 3 );
@@ -98,6 +108,7 @@ final class Aphelion_Audit_Observer {
 			'channel'      => $channel,
 			'transport'    => $channel === 'wp-cli' ? 'process' : 'http',
 			'channelSource' => $this->channel_source( $channel ),
+			'observerVersion' => APHELION_AUDIT_OBSERVER_VERSION,
 			'requestId'    => $this->request_id,
 			'actor'        => $this->actor(),
 			'site'         => home_url( '/' ),
@@ -354,6 +365,64 @@ final class Aphelion_Audit_Observer {
 	public function term_created( int $term_id, int $term_taxonomy_id, string $taxonomy ) : void { $this->term( 'wp.term.created', $term_id, $term_taxonomy_id, $taxonomy ); }
 	public function term_updated( int $term_id, int $term_taxonomy_id, string $taxonomy ) : void { $this->term( 'wp.term.updated', $term_id, $term_taxonomy_id, $taxonomy ); }
 	public function term_deleted( int $term_id, int $term_taxonomy_id, string $taxonomy, $deleted_term, array $object_ids ) : void { $this->term( 'wp.term.deleted', $term_id, $term_taxonomy_id, $taxonomy ); }
+
+	private function user_data( int $user_id, $user = null ) : array {
+		if ( ! $user instanceof WP_User ) {
+			$user = get_userdata( $user_id );
+		}
+		return [
+			'objectType' => 'user',
+			'objectId'   => $user_id,
+			'displayName' => $user instanceof WP_User ? sanitize_text_field( $user->display_name ) : null,
+			'roles'      => $user instanceof WP_User ? array_values( array_map( 'sanitize_key', (array) $user->roles ) ) : [],
+		];
+	}
+
+	public function user_created( int $user_id, array $userdata ) : void {
+		$this->emit( 'wp.user.created', $this->user_data( $user_id ) );
+	}
+
+	public function user_deleted( int $user_id, $reassign, $user ) : void {
+		$this->emit( 'wp.user.deleted', $this->user_data( $user_id, $user ) );
+	}
+
+	public function user_role_changed( int $user_id, string $role, array $old_roles ) : void {
+		$this->emit( 'wp.user.role_changed', array_merge( $this->user_data( $user_id ), [
+			'role' => sanitize_key( $role ),
+			'previousRoles' => array_values( array_map( 'sanitize_key', $old_roles ) ),
+		] ) );
+	}
+
+	private function comment_data( int $comment_id, $comment = null ) : array {
+		if ( ! $comment instanceof WP_Comment ) {
+			$comment = get_comment( $comment_id );
+		}
+		$post = $comment instanceof WP_Comment ? get_post( (int) $comment->comment_post_ID ) : null;
+		return [
+			'objectType'   => 'comment',
+			'objectId'     => $comment_id,
+			'postId'       => $comment instanceof WP_Comment ? (int) $comment->comment_post_ID : null,
+			'postType'     => $post instanceof WP_Post ? sanitize_key( $post->post_type ) : null,
+			'postTitle'    => $post instanceof WP_Post ? sanitize_text_field( get_the_title( $post ) ) : null,
+			'commentStatus' => $comment instanceof WP_Comment ? sanitize_key( $comment->comment_approved ) : null,
+			'commentType'  => $comment instanceof WP_Comment ? sanitize_key( $comment->comment_type ) : null,
+		];
+	}
+
+	public function comment_created( int $comment_id, WP_Comment $comment ) : void {
+		$this->emit( 'wp.comment.created', $this->comment_data( $comment_id, $comment ) );
+	}
+
+	public function comment_status_changed( string $new_status, string $old_status, WP_Comment $comment ) : void {
+		$this->emit( 'wp.comment.status_changed', array_merge( $this->comment_data( (int) $comment->comment_ID, $comment ), [
+			'commentStatus' => sanitize_key( $new_status ),
+			'previousStatus' => sanitize_key( $old_status ),
+		] ) );
+	}
+
+	public function comment_deleted( string $comment_id, WP_Comment $comment ) : void {
+		$this->emit( 'wp.comment.deleted', $this->comment_data( (int) $comment_id, $comment ) );
+	}
 
 	public function plugin_activated( string $plugin, bool $network_wide ) : void { $this->emit( 'wp.plugin.activated', [ 'objectType' => 'plugin', 'name' => sanitize_text_field( $plugin ), 'networkWide' => $network_wide ] ); }
 	public function plugin_deactivated( string $plugin, bool $network_wide ) : void { $this->emit( 'wp.plugin.deactivated', [ 'objectType' => 'plugin', 'name' => sanitize_text_field( $plugin ), 'networkWide' => $network_wide ] ); }

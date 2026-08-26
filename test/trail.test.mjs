@@ -145,7 +145,7 @@ test('declared agent actions and object actors stay owner-readable', () => {
   })
   assert.equal(connected.counts.declared, 1)
   assert.equal(connected.activity[0].summary, 'Change a setting')
-  assert.equal(connected.recent[0].summary, 'noel open')
+  assert.equal(connected.recent[0].summary, 'wp-admin connected')
 })
 
 test('correlation joins journeys without merging distinct connector presence', () => {

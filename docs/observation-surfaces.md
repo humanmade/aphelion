@@ -4,7 +4,7 @@ Files are the shallowest layer. Agents reach WordPress through several channels,
 
 ## The unifying move: observe at the hook layer
 
-Whatever the channel — MCP, REST, WP-CLI over SSH, or a driven browser in wp-admin — writes made through standard WordPress APIs pass through actions and filters such as `save_post`, `updated_option`, `rest_request_after_callbacks`, `activated_plugin`, and term/meta hooks. Ability execution is observed through the official `wp_after_execute_ability` hook, with `wp_ability_invoked` retained as a compatibility tap. A small **audit mu-plugin** observes those supported hooks in one stream and tags each event with the channel WordPress saw (`REST_REQUEST`, `WP_CLI`, admin screen, cron). Direct database writes and unhooked plugin internals remain coverage gaps rather than inferred effects.
+Whatever the channel — MCP, REST, WP-CLI over SSH, or a driven browser in wp-admin — writes made through standard WordPress APIs pass through actions and filters such as `save_post`, `updated_option`, `rest_request_after_callbacks`, `activated_plugin`, and term/meta hooks. User creation, deletion, and role changes are observed through `user_register`, `deleted_user`, and `set_user_role`; comment creation, status changes, and deletion are observed through `wp_insert_comment`, `transition_comment_status`, and `deleted_comment`. Ability execution is observed through the official `wp_after_execute_ability` hook, with `wp_ability_invoked` retained as a compatibility tap. A small **audit mu-plugin** observes those supported hooks in one stream and tags each event with the channel WordPress saw (`REST_REQUEST`, `WP_CLI`, admin screen, cron). Direct database writes and unhooked plugin internals remain coverage gaps rather than inferred effects.
 
 It also maps cleanly onto declared-vs-observed: a client-side tap records what the agent *asked for*; the mu-plugin records what the site *actually did*. Correlating the two per action is the product working at its best.
 
@@ -18,6 +18,8 @@ It also maps cleanly onto declared-vs-observed: a client-side tap records what t
 | **WP-CLI over SSH** | The mu-plugin sees supported writes tagged `WP_CLI`; an agent hook or external driver supplies the declared command family. | `cli.command.declared` + `wp.*` effects |
 | Admin UI (human, or agent-driven browser) | mu-plugin, tagged as admin-screen origin. Gutenberg's actual save is a REST request and is labeled `rest`; wp-admin heartbeat remains a separate presence channel. | `wp.*` with channel=`wp-admin` or `rest` |
 | Runtime baseline and selected option drift | Read-only sidecar polling via WP-CLI, with optional `debug.log` tailing | `runtime.baseline`, `runtime.option.changed`, `wp.log.line` |
+| User lifecycle | Audit mu-plugin lifecycle and role hooks | `wp.user.created`, `wp.user.deleted`, `wp.user.role_changed` |
+| Comment lifecycle | Audit mu-plugin comment hooks; projected as member evidence on the parent post. Each event records the parent post ID, type, and title observed at hook time. | `wp.comment.created`, `wp.comment.status_changed`, `wp.comment.deleted` |
 | Plugin-specific semantics | **Adapters** (Accelerate first): translate raw writes into meaningful events — "experiment X launched on page Y," "variant B is winning" | adapter-namespaced kinds |
 
 ## Liveness
@@ -36,6 +38,14 @@ Each step is optional; every step up makes the same board richer:
 4. **Adapters** (per plugin): semantic events, Accelerate first.
 
 The mu-plugin must hold to the product principles: observe-only (no write path, no settings surface), local-first (it emits to the site's own log/stream that the sidecar collects — no phoning anywhere), and no secrets in payloads.
+
+### Observer version handshake
+
+The shipped mu-plugin declares `APHELION_AUDIT_OBSERVER_VERSION`, and every audit record carries that version. At startup the sidecar also reads the deployed version through the same read-only WP-CLI connection used for runtime observations. A missing or different version is recorded as `runtime.observer.version`, logged locally, and shown on the board as **Observer out of date — some activity may not be recorded**. Aphelion does not install or update the plugin automatically; the warning makes observer drift and its possible coverage gap explicit.
+
+### Stated coverage gaps
+
+The observer does not claim writes that bypass WordPress APIs and their hooks: direct SQL, external database imports, and plugin internals that mutate custom tables without emitting a supported action remain invisible. User profile-field and user-meta edits beyond lifecycle and role changes are not yet modeled. Comment bodies, author identities, email addresses, IP addresses, and user credentials are deliberately excluded; only lifecycle, status, stable IDs, roles, display names, and parent-post association enter the trail. Multisite network-level membership changes need their own network hooks and are not covered by the single-site observer.
 
 ## Journey contracts
 
@@ -57,6 +67,8 @@ separate:
 | Connector recovery | open/ready/heartbeat | error, disconnect, reconnect, close | channel and transport as separate fields, connection ID, actor confidence, phase times and duration |
 | WordPress AI | MCP `mcp.ability.call` | `wp.ability.invoked` plus official `wp.ability.executed` | ability name, request ID, outcome, declared-to-effect latency; compatibility invocation remains distinct from execution |
 | WP-CLI | command declaration | WordPress hook effect | command family, `wp-cli` channel, `docker-exec`/`ssh` transport, process exit/lifecycle; Docker exec must never be called SSH |
+| User lifecycle | connector declaration | `wp.user.created` / `wp.user.role_changed` / `wp.user.deleted` | user ID, display name, roles, lifecycle state; never password or email |
+| Comment lifecycle | connector declaration | `wp.comment.created` / `wp.comment.status_changed` / `wp.comment.deleted` | comment ID and status plus the parent post's ID, type, and title observed at hook time; never body, author, email, or IP |
 
 ### Timing contract
 

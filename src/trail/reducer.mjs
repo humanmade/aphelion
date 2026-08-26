@@ -94,11 +94,16 @@ export function summarizeEvent(event) {
   if (event.kind === 'tool.post') return `Finished ${data.tool || 'an agent action'}`
   if (event.kind === 'mcp.ability.call') return `Requested ${data.ability || data.tool || 'a WordPress ability'}`
   if (event.kind.startsWith('presence.')) {
-    const actor = typeof data.actor === 'string' ? data.actor : data.actor?.login || data.channel || 'Connection'
-    return `${actor} ${event.kind.slice(9)}`
+    const rawChannel = String(data.channel || (typeof data.actor === 'string' ? data.actor : data.actor?.login) || 'Connection')
+    const connection = ({ 'wp-cli': 'WP-CLI', mcp: 'MCP', rest: 'REST', 'wp-admin': 'wp-admin', runtime: 'Runtime' })[rawChannel.toLowerCase()] || rawChannel
+    const phase = event.kind.slice(9)
+    const phrase = ({ open: 'connected', ready: 'ready', heartbeat: 'active', reconnect: 'reconnected', close: 'disconnected', disconnect: 'disconnected', timeout: 'timed out', error: 'connection error' })[phase] || phase.replaceAll('.', ' ')
+    return `${connection} ${phrase}`
   }
   if (event.kind.startsWith('wp.post.')) return data.label || `WordPress ${data.postType === 'page' ? 'page' : 'post'} ${event.kind.slice('wp.post.'.length).replaceAll('.', ' ')}`
   if (event.kind.startsWith('wp.post_meta.')) return data.label || `${data.plugin ? `${data.plugin} ` : 'WordPress '}metadata ${event.kind.slice('wp.post_meta.'.length).replaceAll('.', ' ')}`
+  if (event.kind.startsWith('wp.option.')) return data.label || `${data.name || data.option || 'WordPress setting'} ${event.kind.slice('wp.option.'.length).replaceAll('.', ' ')}`
+  if (event.kind === 'runtime.observer.version') return data.status === 'current' ? 'Observer version current' : 'Observer out of date'
   if (event.kind.startsWith('wp.')) return data.label || `WordPress ${event.kind.slice(3).replaceAll('.', ' ')}`
   return event.kind.replaceAll('.', ' ')
 }

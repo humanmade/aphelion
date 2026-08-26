@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildSiteTopology, displayChannel, FULL_FIT_PLACE_LIMIT, groupTopologyChanges, layoutSiteTopology, OVERVIEW_IDLE_EDGE_LIMIT, resolveTopologyEntity, routeContainmentElbows, siteCardHeight, topologyRunLabel, visibleTopologyEdges } from '../src/board/topology.mjs'
+import { buildSiteTopology, displayChannel, FULL_FIT_PLACE_LIMIT, groupTopologyChanges, layoutSiteTopology, OVERVIEW_IDLE_EDGE_LIMIT, resolveTopologyEntity, routeContainmentElbows, routeSiteTopologyEdges, siteCardHeight, topologyRunLabel, visibleTopologyEdges } from '../src/board/topology.mjs'
 
 const event = (seq, kind, data = {}, source = kind.startsWith('wp.') || kind.startsWith('presence.') ? 'wp' : 'agent') => ({
   v: 1,
@@ -77,7 +77,7 @@ test('v2 containment elbows follow only observed parent relations without moving
 test('v2 collapses consecutive cross-visit changes and compacts only playhead-dead leaves', () => {
   const events = [
     event(1, 'session.start', { target: 'http://localhost:8081', topologyVersion: 2 }, 'session'),
-    event(2, 'wp.post.created', { requestId: 'create', objectType: 'post', objectId: 464, postType: 'page', title: 'Disposable page', status: 'draft', channel: 'wp-cli' }),
+    event(2, 'wp.post.created', { requestId: 'create', objectType: 'post', objectId: 464, postType: 'page', title: 'Disposable page', status: 'draft', blockCount: 1, channel: 'wp-cli' }),
     event(3, 'wp.post.updated', { requestId: 'edit-a', objectType: 'post', objectId: 464, postType: 'page', title: 'Disposable page', status: 'draft', changedProperties: ['content'], channel: 'wp-cli' }),
     event(4, 'wp.post.updated', { requestId: 'edit-b', objectType: 'post', objectId: 464, postType: 'page', title: 'Disposable page', status: 'draft', changedProperties: ['content'], channel: 'wp-cli' }),
     event(5, 'wp.post.deleted', { requestId: 'delete', objectType: 'post', objectId: 464, postType: 'page', title: 'Disposable page', channel: 'wp-cli' }),
@@ -89,7 +89,9 @@ test('v2 collapses consecutive cross-visit changes and compacts only playhead-de
   const beforePage = beforeDelete.nodes.find(node => node.id === 'wp:post:464')
   const afterPage = afterDelete.nodes.find(node => node.id === 'wp:post:464')
 
+  assert.equal(beforePage.stateLine, 'Draft · 1 block')
   assert.equal(beforePage.sizeTier, 'standard')
+  assert.equal(afterPage.stateLine, 'Deleted · 1 block')
   assert.equal(afterPage.sizeTier, 'tombstone')
   assert.equal(siteCardHeight(afterPage), 58)
   assert.equal(groupTopologyChanges(beforePage.changes).find(group => group[0].confirmation?.kind === 'wp.post.updated').length, 2)
@@ -211,6 +213,124 @@ test('historic WordPress bookkeeping options never become durable places', () =>
 
   assert.deepEqual(topology.nodes.map(node => node.id), ['wp:option:blogname'])
   assert.deepEqual(topology.edges.map(edge => edge.to), ['wp:option:blogname'])
+})
+
+test('menus use owner language while WordPress counters remain root evidence', () => {
+  const events = [
+    event(1, 'session.start', { target: 'http://localhost:8081', topologyVersion: 2 }, 'session'),
+    event(2, 'wp.term.created', { requestId: 'menu', objectType: 'term', objectId: 53, taxonomy: 'nav_menu', title: 'Primary navigation', channel: 'wp-cli' }),
+    event(3, 'wp.option.updated', { requestId: 'user', objectType: 'option', name: 'user_count', channel: 'wp-cli' }),
+  ]
+  const topology = buildSiteTopology(events)
+
+  assert.deepEqual(topology.nodes.map(node => node.id), ['wp:term:53'])
+  assert.equal(topology.nodes[0].type, 'menu')
+  assert.equal(topology.nodes[0].title, 'Primary navigation')
+  assert.equal(topology.root.objectCount, 1)
+  assert.deepEqual(topology.root.systemEvidence.map(item => item.kind), ['wp.option.updated'])
+})
+
+test('users are People places and comments remain evidence on their post', () => {
+  const events = [
+    event(1, 'session.start', { target: 'http://localhost:8081', topologyVersion: 2 }, 'session'),
+    event(2, 'wp.post.updated', { requestId: 'page', objectType: 'post', objectId: 339, postType: 'page', title: 'Home', status: 'publish', channel: 'wp-cli' }),
+    event(3, 'wp.user.created', { requestId: 'user', objectType: 'user', objectId: 72, displayName: 'Aphelion Reviewer', roles: ['subscriber'], channel: 'wp-cli' }),
+    event(4, 'wp.user.role_changed', { requestId: 'role', objectType: 'user', objectId: 72, displayName: 'Aphelion Reviewer', role: 'editor', roles: ['editor'], channel: 'wp-cli' }),
+    event(5, 'wp.comment.created', { requestId: 'comment', objectType: 'comment', objectId: 91, postId: 339, postType: 'page', postTitle: 'Home', commentStatus: 'approve', channel: 'wp-cli' }),
+    event(6, 'wp.comment.status_changed', { requestId: 'comment-delete', objectType: 'comment', objectId: 91, postId: 339, postType: 'page', postTitle: 'Home', commentStatus: 'trash', channel: 'wp-cli' }),
+    event(7, 'wp.comment.deleted', { requestId: 'comment-delete', objectType: 'comment', objectId: 91, postId: 339, postType: 'page', postTitle: 'Home', commentStatus: 'delete', channel: 'wp-cli' }),
+    event(8, 'wp.user.deleted', { requestId: 'user-delete', objectType: 'user', objectId: 72, displayName: 'Aphelion Reviewer', roles: ['editor'], channel: 'wp-cli' }),
+    event(9, 'session.end', {}, 'session'),
+  ]
+  const topology = buildSiteTopology(events)
+  const user = topology.nodes.find(node => node.id === 'wp:user:72')
+  const page = topology.nodes.find(node => node.id === 'wp:post:339')
+
+  assert.deepEqual(topology.nodes.map(node => node.id), ['wp:post:339', 'wp:user:72'])
+  assert.equal(user.title, 'Aphelion Reviewer')
+  assert.equal(user.territory, 'people')
+  assert.equal(user.stateLine, 'Deleted')
+  assert.equal(user.sizeTier, 'tombstone')
+  assert.deepEqual(user.changes.map(change => change.verb), ['Created', 'Role changed to Editor', 'Deleted'])
+  assert.deepEqual(user.changes.map(change => change.confirmation.summary), ['Created', 'Role changed to Editor', 'Deleted'])
+  assert.equal(page.title, 'Home')
+  assert.equal(page.stateLine, 'Publish')
+  assert.deepEqual(page.changes.filter(change => change.state?.memberDetail === 'comment').map(change => change.verb), ['Comment added', 'Comment removed'])
+  assert.deepEqual(page.changes.find(change => change.verb === 'Comment removed').confirmations.map(item => item.kind), ['wp.comment.status_changed', 'wp.comment.deleted'])
+  assert.deepEqual(page.history.filter(item => item.kind.startsWith('wp.comment.')).map(item => item.kind), ['wp.comment.created', 'wp.comment.status_changed', 'wp.comment.deleted'])
+  assert.equal(topology.nodes.some(node => node.id === 'wp:comment:91'), false)
+})
+
+test('comment evidence requires observed parent identity and observer drift remains visible', () => {
+  const events = [
+    event(1, 'session.start', { target: 'http://localhost:8081', topologyVersion: 2 }, 'session'),
+    event(2, 'wp.comment.created', { requestId: 'missing-parent', objectType: 'comment', objectId: 90, postId: 338, channel: 'wp-cli' }),
+    event(3, 'wp.comment.created', { requestId: 'comment', objectType: 'comment', objectId: 91, postId: 339, postType: 'page', postTitle: 'Home', commentStatus: 'approve', channel: 'wp-cli' }),
+    event(4, 'runtime.observer.version', { reportedVersion: '0.0.9', expectedVersion: '0.1.0', status: 'outdated', channel: 'wp-cli' }, 'sidecar'),
+  ]
+  const topology = buildSiteTopology(events)
+  const page = topology.nodes.find(node => node.id === 'wp:post:339')
+
+  assert.deepEqual(topology.nodes.map(node => node.id), ['wp:post:339'])
+  assert.equal(page.title, 'Home')
+  assert.equal(page.stateLine, null)
+  assert.deepEqual(topology.warnings, [{
+    id: 'observer-version',
+    message: 'Observer out of date — some activity may not be recorded',
+    expectedVersion: '0.1.0',
+    reportedVersion: '0.0.9',
+  }])
+})
+
+test('site flows use short orthogonal routes and enter the nearest honest face', () => {
+  const events = [
+    event(1, 'session.start', { target: 'http://localhost:8081', topologyVersion: 2 }, 'session'),
+    event(2, 'wp.post.updated', { requestId: 'scratch', objectType: 'post', objectId: 480, postType: 'post', title: 'Scratch', channel: 'wp-cli' }),
+    event(3, 'wp.post.updated', { requestId: 'home', objectType: 'post', objectId: 339, postType: 'page', title: 'Home', channel: 'wp-cli' }),
+    event(4, 'wp.term.created', { requestId: 'category', objectType: 'term', objectId: 52, taxonomy: 'category', title: 'QA', channel: 'wp-cli' }),
+    event(5, 'wp.option.updated', { requestId: 'plugin', objectType: 'option', name: 'accelerate_outbound_tracking_enabled', channel: 'wp-cli' }),
+    event(6, 'wp.option.updated', { requestId: 'setting', objectType: 'option', name: 'blogdescription', channel: 'wp-cli' }),
+  ]
+  const topology = buildSiteTopology(events)
+  const metrics = Object.fromEntries([topology.root, ...topology.nodes].map(node => [node.id, { h: siteCardHeight(node) }]))
+  const layout = layoutSiteTopology(topology, { nodeW: 320, nodeH: 220, gapX: 112, gapY: 24, padX: 42, padY: 44, nodeHeights: Object.fromEntries(Object.entries(metrics).map(([id, value]) => [id, value.h])) })
+  const routes = routeSiteTopologyEdges(layout.nodes, topology.edges, { nodeW: 320, metrics, regions: layout.regions })
+  const home = routes.find(edge => edge.to === 'wp:post:339')
+
+  assert.ok(routes.every(edge => !/[CQSA]/i.test(edge.path)))
+  assert.ok(home.cornerCount <= 2)
+  assert.equal(home.entryFace, 'top')
+  assert.ok(routes.reduce((sum, edge) => sum + edge.segmentCount, 0) < topology.edges.length * 5)
+})
+
+test('shared cross-territory runs stay in the inter-band gutter', () => {
+  const events = [
+    event(1, 'session.start', { target: 'http://localhost:8081', topologyVersion: 2 }, 'session'),
+    event(2, 'wp.post.updated', { requestId: 'scratch', objectType: 'post', objectId: 480, postType: 'post', title: 'Scratch', channel: 'wp-cli' }),
+    event(3, 'wp.post.updated', { requestId: 'home', objectType: 'post', objectId: 339, postType: 'page', title: 'Home', channel: 'wp-cli' }),
+    event(4, 'wp.comment.created', { requestId: 'comment', objectType: 'comment', objectId: 91, postId: 339, postType: 'page', postTitle: 'Home', commentStatus: 'approve', channel: 'wp-cli' }),
+    event(5, 'wp.comment.status_changed', { requestId: 'comment-delete', objectType: 'comment', objectId: 91, postId: 339, postType: 'page', postTitle: 'Home', commentStatus: 'trash', channel: 'wp-cli' }),
+    event(6, 'wp.comment.deleted', { requestId: 'comment-delete', objectType: 'comment', objectId: 91, postId: 339, postType: 'page', postTitle: 'Home', commentStatus: 'delete', channel: 'wp-cli' }),
+    event(7, 'wp.term.created', { requestId: 'category', objectType: 'term', objectId: 52, taxonomy: 'category', title: 'QA', channel: 'wp-cli' }),
+    event(8, 'wp.term.created', { requestId: 'menu', objectType: 'term', objectId: 53, taxonomy: 'nav_menu', title: 'Primary navigation', channel: 'wp-cli' }),
+    event(9, 'wp.option.updated', { requestId: 'plugin', objectType: 'option', name: 'accelerate_outbound_tracking_enabled', channel: 'wp-cli' }),
+    event(10, 'wp.option.updated', { requestId: 'setting', objectType: 'option', name: 'blogdescription', channel: 'wp-cli' }),
+  ]
+  const topology = buildSiteTopology(events)
+  const graphNodes = [{ ...topology.root, changes: [] }, ...topology.nodes]
+  const metrics = Object.fromEntries(graphNodes.map(node => [node.id, { h: siteCardHeight(node) }]))
+  const layout = layoutSiteTopology(topology, { nodeW: 320, nodeH: 220, gapX: 112, gapY: 24, padX: 42, padY: 44, nodeHeights: Object.fromEntries(Object.entries(metrics).map(([id, value]) => [id, value.h])) })
+  const routes = routeSiteTopologyEdges(layout.nodes, topology.edges, { nodeW: 320, metrics, regions: layout.regions })
+  const contentRegion = layout.regions.find(region => region.territory === 'content')
+  const contentBottom = contentRegion.y + contentRegion.height
+  const lowerBandTop = Math.min(...layout.regions.filter(region => ['structure', 'plugins', 'settings'].includes(region.territory)).map(region => region.y))
+
+  for (const target of ['wp:term:53', 'wp:option:accelerate_outbound_tracking_enabled', 'wp:option:blogdescription']) {
+    const route = routes.find(edge => edge.to === target)
+    const gutterY = Number(route.path.match(/V(-?[\d.]+)H/)[1])
+    assert.ok(gutterY > contentBottom, `${target} crosses the content territory`)
+    assert.ok(gutterY < lowerBandTop, `${target} misses the inter-band gutter`)
+  }
 })
 
 test('declared work is in flight before presence makes its reusable edge live', () => {

@@ -2,27 +2,37 @@
 
 **The local flight recorder for AI agents working on WordPress.**
 
-![Aphelion replays agent work over a stable map of the WordPress objects it touched](assets/aphelion-board.jpg)
+[![npm version](https://img.shields.io/npm/v/aphelion.svg)](https://www.npmjs.com/package/aphelion)
+[![npm downloads](https://img.shields.io/npm/dm/aphelion.svg)](https://www.npmjs.com/package/aphelion)
+[![CI](https://github.com/humanmade/aphelion/actions/workflows/ci.yml/badge.svg)](https://github.com/humanmade/aphelion/actions/workflows/ci.yml)
+[![license](https://img.shields.io/github/license/humanmade/aphelion.svg)](./LICENSE)
+[![Socket Badge](https://socket.dev/api/badge/npm/package/aphelion)](https://socket.dev/npm/package/aphelion)
+
+![A recorded agent session replayed on the Aphelion board: the site, its content, structure, plugin, and settings territories, with a page rename landing live](assets/aphelion-board.jpg)
 
 An agent says it updated a page. The filesystem shows a diff. WordPress reports a save.
-Those are three fragments of one story, usually scattered across terminals, session logs,
-and site logs. Aphelion records them as one append-only local trail and renders that same
-record as a live topology, replay, and shareable timelapse.
+Aphelion records those fragments as one append-only local trail and renders the same record
+three ways: a live map while the agent works, a replay you can scrub when something needs
+explaining, and a timelapse you can share when something went right.
 
-| Without Aphelion | With Aphelion |
-| --- | --- |
-| “The agent said it finished.” | Declared intent stays beside the independently observed effect. |
-| Repo changes and site changes live in different logs. | Repo, WP-CLI, REST, wp-admin, MCP, and Abilities events share one timed journey. |
-| A disconnected connector looks like silence. | Ready, heartbeat, timeout, reconnect, error, and close are explicit phases. |
-| A demo requires screen recording while the work happens. | Any recorded trail can be replayed or rendered afterward. |
-
-Aphelion is deliberately an observer, not an orchestrator. It binds to loopback, has no
-accounts or telemetry, and never sends commands to the agent or writes to the project or
-site it watches.
+- **A map, not a log** — pages, settings, plugins, menus, and users appear as durable places
+  in WordPress-shaped territories; changes land on them with light and motion, one to two
+  seconds after they happen.
+- **Declared beside observed** — an agent's claim renders as a provisional place until
+  WordPress independently confirms it; agreement is silent, divergence is where you look.
+- **Replay any session** — scrub through a recorded trail on the same stable map; every
+  moment is deep-linkable (`?session=…&mode=replay&seq=…`).
+- **Timelapse after the fact** — render a shareable HTML/MP4 of any recorded session; you
+  never had to press record.
+- **WordPress-native depth** — block edits fold into their page, revisions into their post,
+  plugin options into their plugin's territory; owner-readable names throughout.
+- **Sessions that end** — idle sessions close and rotate automatically; the observer
+  version-handshakes so a stale mu-plugin warns instead of silently under-recording.
+- **Local by construction** — binds to `127.0.0.1`, no accounts, no telemetry; trails are
+  `0600` append-only JSONL files on your machine, never deleted automatically.
+- **Zero dependencies** — one command, Node 20+, nothing else.
 
 ## Quickstart
-
-Requires Node 20 or newer.
 
 ```sh
 npm install --global aphelion
@@ -30,35 +40,10 @@ cd /path/to/your-project
 aphelion --open
 ```
 
-The command prints the local board URL and trail path. Keep it running while an agent works;
-press `Ctrl-C` when the session is over.
+The command prints the local board URL and trail path. Keep it running while an agent works.
+Project-local works too: `npm install --save-dev aphelion && npx aphelion --open`.
 
-Prefer a project-local install?
-
-```sh
-npm install --save-dev aphelion
-npx aphelion --open
-```
-
-## What it records
-
-- **Declared intent:** supported agent lifecycle and tool hooks, including MCP calls.
-- **Repository evidence:** file changes and project-plan progress.
-- **WordPress effects:** posts, pages, blocks, settings, metadata, terms, plugins, REST writes,
-  and Abilities execution observed through WordPress hooks.
-- **Connection state:** source-scoped presence for agent hooks, MCP, WP-CLI, REST, wp-admin,
-  and the WordPress sidecar.
-- **Timing:** source event time, local receipt time, capture lag, connection duration, and
-  declared-to-effect latency when a request ID joins the phases.
-
-Block and setting evidence stays structural. The site's public title is retained as place identity;
-a page edit can show that `core/heading.level`
-changed and a nested `core/button.backgroundColor` was added without storing the block text,
-attribute values, option values, credentials, or Ability inputs/results.
-
-## The core idea: record once, render many
-
-Every surface is a projection of one JSONL trail:
+## Record once, render many
 
 ```text
 agent hooks ─┐
@@ -67,63 +52,28 @@ WordPress ───┤                     ├─> replay
 WP-CLI/MCP ──┘                     └─> timelapse
 ```
 
-Live and replay use the same reducer. Timelapse is generated from the same events. No view
-owns a second history, so a crash-ended session remains readable and a malformed line cannot
-hide later valid evidence.
-
-The board speaks three nouns: **places**, **flows**, and **changes**. A page, setting, plugin,
-Ability, or site is a place with one stable node per session. A channel is a reusable flow into
-that place. A change is a timed claim and WordPress confirmation preserved together in history,
-never another card. Place cards show only where they are, what they are called, their current
-state, their latest change, and the door to history. Replay advances light, motion, state, and
-history over the same top-left layout, so a place never jumps merely because time moved forward.
-
-Declared work is shown as `in flight`; `live` is reserved for an active presence connection.
-Edge motion uses the recorded request or connection duration, falling back to 1200ms only when
-no positive gap is measurable. Opening a place exposes its scrollable change history; request
-IDs, transports, and raw event data remain in the inspector rather than riding the canvas. Maps are
-rebuilt per session; clustering and durable cross-session site maps remain deferred.
-
-## Share a local run
-
-The board URL follows what you are viewing. Choosing a recorded session, changing replay or
-timelapse mode, moving the playhead, or opening a place or flow updates the address bar with a
-deep link. Copy that URL to reopen the same local evidence state without navigating the board
-again.
-
-```text
-http://127.0.0.1:5330/?session=20260825T035601Z-30074fe2&mode=replay&seq=30&place=wp%3Apost%3A464
-```
-
-Deep links use stable session IDs, trail sequence numbers, and topology identities. Invalid or
-expired parameters fall back to the available live board instead of blocking startup. These are
-localhost links: they do not upload or publish the trail, and another person can use one only
-when they can reach the same local Aphelion daemon and its trail files.
+Every surface is a projection of one JSONL trail — no view owns a second history. The board
+speaks three nouns: **places** (durable WordPress objects, the only things with a position),
+**flows** (channels carrying an actor's work), and **changes** (timed claim-plus-confirmation
+moments in a place's history). The full contract lives in
+[the topology language](docs/topology-language.md); evidence stays structural — block and
+attribute *names*, never content, option values, credentials, or Ability payloads.
 
 ## Add WordPress evidence
 
-Repository observation works with no WordPress installation. Site context is progressive:
+Repository observation needs no WordPress installation. Site context is progressive:
 
 | Level | Install cost | What becomes visible |
 | --- | --- | --- |
-| Repo watcher and agent hooks | None | Files, declared actions, plan progress, agent presence |
-| Read-only WP-CLI sidecar | A local WP-CLI, Docker, or SSH command | Runtime baseline, drift fingerprints, connector health |
-| Audit mu-plugin | One PHP file in `wp-content/mu-plugins/` | WordPress hook effects, actor/channel context, block and metadata changes |
-| Plugin adapter | Optional | Product semantics layered beside the raw effect; Accelerate is included |
-
-With the project-local installation shown above, install the observer from the package:
+| Repo watcher and agent hooks | None | Files, declared actions, plan progress, presence |
+| Read-only WP-CLI sidecar | A local WP-CLI / Docker / SSH command | Runtime baseline, drift fingerprints, site identity |
+| Audit mu-plugin | One PHP file in `wp-content/mu-plugins/` | WordPress hook effects: posts, blocks, settings, terms, menus, users, comments, plugins |
+| Plugin adapter | Optional | Product semantics beside the raw effect; Accelerate included |
 
 ```sh
 cp node_modules/aphelion/src/mu-plugin/aphelion-audit.php \
   /path/to/wordpress/wp-content/mu-plugins/aphelion-audit.php
-```
 
-For a global installation, replace `node_modules/aphelion` with
-`$(npm root --global)/aphelion`.
-
-Then point Aphelion at the site-local log and, optionally, a read-only WP-CLI command:
-
-```sh
 aphelion \
   --site http://localhost:8081 \
   --audit-log /path/to/wordpress/wp-content/aphelion/audit.jsonl \
@@ -131,22 +81,17 @@ aphelion \
   --open
 ```
 
-The mu-plugin has no settings screen and no remote transport. It supports PHP 7.4+;
-WordPress-aware site features target WordPress 6.9+.
-
-See [WordPress observation surfaces](docs/observation-surfaces.md) for the full channel,
-transport, redaction, and timing contract.
+The mu-plugin has no settings screen and no remote transport (PHP 7.4+; WordPress-aware
+features target 6.9+). Full channel, transport, redaction, and timing contract:
+[WordPress observation surfaces](docs/observation-surfaces.md).
 
 ## Run automatically — opt in
 
-The normal command stays foreground and explicit. If this is a workstation or long-lived
-local WordPress stack, an OS user service can start Aphelion at login and restart it after a
-failure. This is intentionally not installed or enabled by default: background observation
-and never-automatic retention should be a conscious choice.
-
-Use [Running Aphelion in the background](docs/background-service.md) for macOS `launchd`,
-Linux `systemd --user`, WordPress arguments, health checks, and removal. Agent hooks should
-relay events to that one service—not start a fresh daemon for every tool call.
+The normal command stays foreground and explicit. For a workstation or long-lived local
+stack, an OS user service can start Aphelion at login — deliberately not enabled by default:
+background observation should be a conscious choice. See
+[Running Aphelion in the background](docs/background-service.md) for `launchd`/`systemd
+--user` setup, health checks, and removal.
 
 ## CLI
 
@@ -155,59 +100,36 @@ relay events to that one service—not start a fresh daemon for every tool call.
 | `aphelion [target]` | Observe a repository; defaults to the current directory. |
 | `aphelion serve [target]` | The explicit form of the default command. |
 | `aphelion sessions [target]` | List recorded sessions and their trail paths. |
-| `aphelion timelapse <trail.jsonl>` | Render a standalone HTML timelapse from an existing trail. |
-| `aphelion hook` | Relay one supported agent-hook payload from stdin to the local daemon. |
-
-Common options:
+| `aphelion timelapse <trail.jsonl>` | Render a standalone timelapse from an existing trail. |
+| `aphelion hook` | Relay one agent-hook payload from stdin to the local daemon. |
 
 | Option | Meaning |
 | --- | --- |
 | `--open` | Open the loopback board after startup. |
-| `--port <number>` | Preferred loopback port; Aphelion falls forward if it is occupied. |
-| `--idle-timeout <minutes>` | End a session after this much non-heartbeat inactivity; defaults provisionally to 30 minutes. |
+| `--port <number>` | Preferred loopback port; falls forward if occupied. |
+| `--idle-timeout <minutes>` | End a session after this much non-heartbeat inactivity (default 30). |
 | `--site <url>` | Record a site target instead of a repository target. |
 | `--audit-log <path>` | Tail the site-local audit mu-plugin JSONL. |
 | `--debug-log <path>` | Tail a WordPress debug log with capture-boundary redaction. |
-| `--wp-command <json>` | Run a read-only WP-CLI baseline from a JSON string array; no shell evaluation. |
-| `--integrity` | Add optional SHA-256 `prev` links to new trail events. |
+| `--wp-command <json>` | Read-only WP-CLI baseline from a JSON string array; no shell evaluation. |
+| `--integrity` | Add SHA-256 `prev` links to new trail events. |
 | `--no-watch` | Disable repository filesystem watching. |
-| `--output <path>` | Choose the timelapse `.html` or `.mp4` output path. |
+| `--output <path>` | Timelapse `.html` or `.mp4` output path. |
 
-## Agent hooks
-
-Pipe a supported lifecycle or tool-hook JSON payload to the relay:
-
-```sh
-printf '%s\n' "$AGENT_HOOK_JSON" | aphelion hook
-```
-
-The relay uses `APHELION_PORT` when the daemon is not on the default port. MCP calls remain
-declared requests; WordPress hooks remain independent observed effects. A request or
-correlation ID relates them without merging their source records.
+Agent hooks pipe straight in — `printf '%s\n' "$AGENT_HOOK_JSON" | aphelion hook` — and MCP
+calls stay declared requests, related to observed WordPress effects by request ID without
+ever merging the records.
 
 ## Library
 
-Aphelion is also a typed ESM library with zero runtime dependencies:
+Aphelion is also a typed, zero-dependency ESM library:
 
 ```js
-import {
-  createTrailWriter,
-  projectEvents,
-  renderTimelapse,
-  startDaemon,
-} from 'aphelion'
-
-const writer = createTrailWriter({ target: process.cwd() })
-writer.append('hook', 'agent.action.declared', {
-  summary: 'Update the landing page',
-  requestId: 'request-42',
-})
-writer.close()
+import { createTrailWriter, projectEvents, renderTimelapse, startDaemon } from 'aphelion'
 ```
 
 The package exports the trail reader/writer, reducer, replay index, daemon, sidecar,
-WordPress scanner, Accelerate adapter, and timelapse renderer. Type declarations ship with
-the package.
+WordPress scanner, Accelerate adapter, and timelapse renderer, with type declarations.
 
 ## Trail ownership and privacy
 
@@ -215,24 +137,20 @@ the package.
 | --- | --- |
 | Project trails | `<repo>/.aphelion/trail/<session>.jsonl` |
 | Site trails | `~/.aphelion/trails/<site-slug>/<session>.jsonl` |
-| File mode | `0600` |
-| Flush | Every event |
+| File mode / flush | `0600`, flushed every event |
 | Retention | Never deleted automatically |
-| Reader | Skips malformed lines and continues |
-| Network | Board and ingest server bind to `127.0.0.1` |
-| Telemetry/accounts | None |
+| Network | Board and ingest bind to `127.0.0.1` |
+| Telemetry / accounts | None |
 
-Trails can still contain local paths, object titles, actor names, and action summaries. Treat
-them as operational records and review them before sharing. See [Security](SECURITY.md).
+Trails can still contain local paths, object titles, actor names, and action summaries —
+treat them as operational records and review before sharing. See [Security](SECURITY.md).
 
 ## Documentation
 
-- [Documentation index](docs/README.md)
-- [Running in the background](docs/background-service.md)
-- [WordPress observation surfaces](docs/observation-surfaces.md)
-- [Trail format v1](docs/trail-format.md)
-- [Release process](RELEASING.md)
-- [Changelog](CHANGELOG.md)
+[Documentation index](docs/README.md) · [Topology language](docs/topology-language.md) ·
+[Observation surfaces](docs/observation-surfaces.md) · [Trail format](docs/trail-format.md) ·
+[Background service](docs/background-service.md) · [Releasing](RELEASING.md) ·
+[Changelog](CHANGELOG.md)
 
 ## Development
 
@@ -241,13 +159,13 @@ npm install
 npm run verify
 ```
 
-The verification gate builds the static board, syntax-checks JavaScript and PHP, validates
-public documentation, runs unit/integration and desktop/mobile browser tests, audits package
-exports and types, inspects the dry-run tarball, and installs it into a blank consumer.
+The verification gate builds the board, checks JS and PHP syntax, validates docs, runs the
+unit and desktop/mobile browser suites, audits package exports, and installs the dry-run
+tarball into a blank consumer.
 
-Aphelion adapts the declared-versus-observed model and topology conventions from
-[sodiumsun/agenttrail](https://github.com/sodiumsun/agenttrail), vendored at commit
-`41454d4`. Substantially adapted files retain provenance comments.
+Aphelion adapts the declared-versus-observed model from
+[sodiumsun/agenttrail](https://github.com/sodiumsun/agenttrail) (MIT, vendored at `41454d4`);
+substantially adapted files retain provenance comments.
 
 ## License
 

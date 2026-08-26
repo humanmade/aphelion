@@ -14,12 +14,27 @@ const CORE_OPTIONS = {
   page_on_front: 'Homepage',
   show_on_front: 'Homepage display',
 }
-const BOOKKEEPING_OPTIONS = new Set(['cron', 'category_children', 'rewrite_rules', 'recently_edited'])
+const BOOKKEEPING_OPTIONS = new Set([
+  'cron',
+  'category_children',
+  'rewrite_rules',
+  'recently_edited',
+  'user_count',
+  'db_version',
+  'initial_db_version',
+  'finished_splitting_shared_terms',
+])
 
 const text = value => String(value ?? '').trim()
 const isBookkeepingOption = value => {
   const name = text(value)
   return name.startsWith('_transient_') || name.startsWith('_site_transient_') || BOOKKEEPING_OPTIONS.has(name)
+}
+const isBookkeepingEvent = event => {
+  const data = event?.data || {}
+  const rawType = text(data.objectType || data.type).toLowerCase().replaceAll('_', '-')
+  const optionName = data.option || (rawType === 'option' ? data.name ?? data.id : null)
+  return optionName !== undefined && optionName !== null && isBookkeepingOption(optionName)
 }
 const titleCase = value => text(value)
   .replace(/^_+/, '')
@@ -51,6 +66,7 @@ function entityLabel(type, identity, data) {
   if (type === 'ability') return titleCase(identity)
   if (type === 'plugin') return titleCase(identity)
   if (type === 'route') return text(data.route || identity)
+  if (type === 'user') return text(data.displayName || data.title) || `User #${identity}`
   if (data.title) return text(data.title)
   if (type === 'page') return `Page #${identity}`
   if (type === 'post') return `Post #${identity}`
@@ -114,6 +130,45 @@ export function resolveTopologyEntity(event) {
       type,
       category: 'content',
       title: entityLabel(type, objectId, data),
+      plugin: data.plugin || null,
+    }
+  }
+
+  if (rawType === 'comment') {
+    const postId = data.postId ?? data.commentPostId ?? data.comment_post_ID
+    const postType = text(data.postType).toLowerCase()
+    if (postId === undefined || postId === null || postId === '' || Number(postId) === 0 || !postType) return null
+    const type = postType === 'page' ? 'page' : 'post'
+    const postTitle = text(data.postTitle)
+    return {
+      key: `wp:post:${postId}`,
+      identity: String(postId),
+      type,
+      category: 'content',
+      title: postTitle || `Untitled ${type}`,
+      plugin: data.plugin || null,
+    }
+  }
+
+  if (rawType === 'term' && objectId !== undefined && objectId !== null) {
+    const type = text(data.taxonomy).toLowerCase() === 'nav_menu' ? 'menu' : 'term'
+    return {
+      key: `wp:term:${objectId}`,
+      identity: String(objectId),
+      type,
+      category: 'objects',
+      title: entityLabel(type, objectId, data),
+      plugin: data.plugin || null,
+    }
+  }
+
+  if (rawType === 'user' && objectId !== undefined && objectId !== null) {
+    return {
+      key: `wp:user:${objectId}`,
+      identity: String(objectId),
+      type: 'user',
+      category: 'objects',
+      title: entityLabel('user', objectId, data),
       plugin: data.plugin || null,
     }
   }
@@ -217,12 +272,36 @@ function eventSummary(event) {
   if (event.kind.startsWith('wp.post_meta.')) return `${data.plugin ? `${titleCase(data.plugin)} ` : ''}metadata ${event.kind.split('.').at(-1)}`
   if (event.kind.startsWith('wp.post.')) return `${data.postType === 'page' ? 'Page' : 'Post'} ${event.kind.split('.').at(-1)}`
   if (event.kind.startsWith('wp.option.')) return `Setting ${event.kind.split('.').at(-1)}`
+  if (event.kind === 'wp.user.created') return 'Created'
+  if (event.kind === 'wp.user.role_changed') return `Role changed to ${titleCase(data.role || data.roles?.[0] || 'new role')}`
+  if (event.kind === 'wp.user.deleted') return 'Deleted'
+  if (event.kind === 'wp.comment.created') return 'Comment added'
+  if (event.kind === 'wp.comment.deleted') return 'Comment removed'
+  if (event.kind === 'wp.comment.status_changed') {
+    const status = text(data.commentStatus || data.status).toLowerCase()
+    if (['approve', 'approved', '1'].includes(status)) return 'Comment approved'
+    if (['trash', 'deleted', 'delete'].includes(status)) return 'Comment removed'
+    if (['hold', 'unapproved', '0'].includes(status)) return 'Comment held for review'
+    if (status === 'spam') return 'Comment marked as spam'
+    return 'Comment status changed'
+  }
   if (event.kind.startsWith('wp.ability.')) return `Ability ${event.kind.split('.').at(-1)}`
   return event.kind.replaceAll('.', ' ')
 }
 
 function observedVerb(event) {
   if (isTitleOrNameChange(event)) return 'Renamed'
+  if (event.kind === 'wp.user.role_changed') return `Role changed to ${titleCase(event.state?.role || event.data?.role || event.state?.roles?.[0] || 'new role')}`
+  if (event.kind === 'wp.comment.created') return 'Comment added'
+  if (event.kind === 'wp.comment.deleted') return 'Comment removed'
+  if (event.kind === 'wp.comment.status_changed') {
+    const status = text(event.state?.commentStatus || event.data?.commentStatus || event.data?.status).toLowerCase()
+    if (['approve', 'approved', '1'].includes(status)) return 'Comment approved'
+    if (['trash', 'deleted', 'delete'].includes(status)) return 'Comment removed'
+    if (['hold', 'unapproved', '0'].includes(status)) return 'Comment held for review'
+    if (status === 'spam') return 'Comment marked as spam'
+    return 'Comment status changed'
+  }
   const action = event.kind.split('.').at(-1)
   return ({
     created: 'Created',
@@ -232,6 +311,8 @@ function observedVerb(event) {
     trashed: 'Trashed',
     updated: 'Updated',
     changed: 'Changed',
+    role_changed: 'Changed',
+    status_changed: 'Changed',
   })[action] || titleCase(action)
 }
 
@@ -261,6 +342,13 @@ function isTitleOrNameChange(event) {
 
 function stateData(event) {
   const data = event.data || {}
+  const memberDetail = event.kind.startsWith('wp.comment.')
+    ? 'comment'
+    : event.kind.startsWith('wp.post_meta.')
+      ? 'metadata'
+      : isRevisionEvent(event)
+        ? 'revision'
+        : null
   return {
     title: text(data.title || data.displayName || data.objectName) || null,
     status: data.status || null,
@@ -270,7 +358,26 @@ function stateData(event) {
     afterType: data.afterType || data.valueType || null,
     metaKey: data.metaKey || null,
     changedProperties: Array.isArray(data.changedProperties) ? data.changedProperties : [],
+    role: data.role || null,
+    roles: Array.isArray(data.roles) ? data.roles : [],
+    commentStatus: data.commentStatus || data.status || null,
+    objectType: data.objectType || data.type || null,
+    objectId: data.objectId ?? data.id ?? null,
+    memberDetail,
   }
+}
+
+function memberFamily(item) {
+  if (item?.kind?.startsWith('wp.comment.')) return 'comment'
+  if (item?.kind?.startsWith('wp.user.')) return 'user'
+  return null
+}
+
+function memberPriority(item) {
+  if (item?.kind?.endsWith('.deleted')) return 4
+  if (item?.kind?.endsWith('.role_changed') || item?.kind?.endsWith('.status_changed')) return 3
+  if (item?.kind?.endsWith('.created')) return 2
+  return 1
 }
 
 function changeRecords(history, sessionEnded = false) {
@@ -324,6 +431,30 @@ function changeRecords(history, sessionEnded = false) {
       state: item.state,
       rawKind: item.rawKind,
       adapter: item.adapter,
+    }
+    const memberCausal = [...changes].reverse().find(change => {
+      if (!change.confirmation || !item.requestId || change.requestId !== item.requestId) return false
+      if (Math.abs(item.ts - change.ts) > 1_000) return false
+      const evidence = change.confirmations?.length ? change.confirmations : [change.confirmation]
+      const previous = evidence.at(-1)
+      return memberFamily(item) && memberFamily(item) === memberFamily(previous)
+        && text(item.state?.objectId) && text(item.state?.objectId) === text(previous.state?.objectId)
+    })
+    if (memberCausal) {
+      memberCausal.confirmations = [...(memberCausal.confirmations?.length ? memberCausal.confirmations : [memberCausal.confirmation]), confirmation]
+      if (memberPriority(item) >= memberPriority(memberCausal.confirmation)) {
+        Object.assign(memberCausal, {
+          confirmation,
+          verb: observedVerb(item),
+          seq: item.seq,
+          ts: item.ts,
+          channel: item.channel || memberCausal.channel,
+          actor: item.actor || memberCausal.actor,
+          transport: item.transport || memberCausal.transport,
+          state: item.state,
+        })
+      }
+      continue
     }
     const causal = [...changes].reverse().find(change => {
       if (!change.confirmation || !item.requestId || change.requestId !== item.requestId) return false
@@ -391,8 +522,9 @@ function changeRecords(history, sessionEnded = false) {
 
 function placeState(entity, changes) {
   const confirmations = changes.filter(change => change.confirmation)
-  const latest = confirmations.at(-1)
-  const relevant = confirmations.map(change => change.state).filter(Boolean)
+  const placeConfirmations = confirmations.filter(change => !change.state?.memberDetail)
+  const latest = placeConfirmations.at(-1)
+  const relevant = placeConfirmations.map(change => change.state).filter(Boolean)
   const latestStatus = [...relevant].reverse().find(state => state.status)?.status
   const blockCount = [...relevant].reverse().find(state => state.blockCount !== null)?.blockCount
 
@@ -419,6 +551,12 @@ function placeState(entity, changes) {
     return `${type} · ${state.restored ? 'restored' : latest ? 'changed' : 'unchanged'}`
   }
   if (entity.type === 'plugin') return `${confirmations.length} confirmed ${confirmations.length === 1 ? 'change' : 'changes'}`
+  if (entity.type === 'user') {
+    const latestKind = latest?.confirmation?.kind || ''
+    if (latestKind.endsWith('.deleted')) return 'Deleted'
+    const role = [...relevant].reverse().find(state => state.role || state.roles?.length)
+    return titleCase(role?.role || role?.roles?.[0] || (latestKind.endsWith('.created') ? 'Active' : 'User'))
+  }
   if (entity.category === 'abilities') return confirmations.length ? `${confirmations.length} ${confirmations.length === 1 ? 'invocation' : 'invocations'}` : 'No confirmed invocations'
 }
 
@@ -454,6 +592,7 @@ function buildRequestTargets(events) {
 }
 
 function targetsForEvent(event, requestTargets) {
+  if (isBookkeepingEvent(event)) return []
   const direct = resolveTopologyEntity(event)
   if (direct) return [direct.key]
   if (isRevisionEvent(event)) return []
@@ -745,9 +884,16 @@ export function buildSiteTopology(events, options = {}) {
   const visibleEvents = Array.from(events || [])
   const blueprintEvents = Array.from(options.blueprintEvents || visibleEvents)
   const topologyVersion = recordedTopologyVersion(blueprintEvents)
-  const requestTargets = buildRequestTargets(blueprintEvents)
-  const blueprint = analyze(blueprintEvents, requestTargets, topologyVersion)
-  const visible = analyze(visibleEvents, requestTargets, topologyVersion)
+  const blueprintRequestTargets = buildRequestTargets(blueprintEvents)
+  const visibleRequestTargets = buildRequestTargets(visibleEvents)
+  for (const event of visibleEvents) {
+    if (topologyEventClass(event) !== 'declared' || resolveTopologyEntity(event)) continue
+    const id = requestId(event)
+    const targets = blueprintRequestTargets.get(id)
+    if (id && targets?.some(key => provisionalEntity(key, event))) visibleRequestTargets.set(id, [...targets])
+  }
+  const blueprint = analyze(blueprintEvents, blueprintRequestTargets, topologyVersion)
+  const visible = analyze(visibleEvents, visibleRequestTargets, topologyVersion)
   const blueprintEdges = [...blueprint.edges.values()]
   const visibleEdges = [...visible.edges.values()]
   const visibleEdgeById = new Map(visibleEdges.map(edge => [edge.id, edge]))
@@ -792,6 +938,22 @@ export function buildSiteTopology(events, options = {}) {
   const rootFlow = visibleFlows.find(edge => edge.connected) || visibleFlows.find(edge => edge.active) || latestFlow
   const allChanges = nodes.flatMap(node => node.changes.map(change => ({ ...change, placeId: node.id, placeTitle: node.title })))
     .toSorted((a, b) => a.seq - b.seq)
+  const systemEvidence = visibleEvents.filter(isBookkeepingEvent).map(event => ({
+    seq: event.seq,
+    ts: event.ts,
+    kind: event.kind,
+    summary: eventSummary(event),
+    channel: channel(event),
+    transport: transport(event),
+    state: stateData(event),
+  }))
+  const observerReport = [...visibleEvents].reverse().find(event => event.kind === 'runtime.observer.version')?.data || null
+  const warnings = observerReport && observerReport.status !== 'current' ? [{
+    id: 'observer-version',
+    message: 'Observer out of date — some activity may not be recorded',
+    expectedVersion: observerReport.expectedVersion || null,
+    reportedVersion: observerReport.reportedVersion || null,
+  }] : []
   const focusEdge = visibleFlows.find(edge => edge.current) || null
   const focusChange = focusEdge
     ? [...allChanges].reverse().find(change => change.placeId === focusEdge.to && (!focusEdge.lastRequestId || change.requestId === focusEdge.lastRequestId)) || null
@@ -829,7 +991,8 @@ export function buildSiteTopology(events, options = {}) {
       runCount: new Set(visibleEdges.flatMap(edge => [...edge.requests])).size,
       objectCount: visibleNodes.length,
       channelCount: new Set(visibleEdges.map(edge => edge.channel)).size,
-      history: [],
+      history: systemEvidence,
+      systemEvidence,
       changes: allChanges,
       stateLine: `${visibleNodes.length} ${visibleNodes.length === 1 ? 'place' : 'places'} touched${rootFlow ? ` · ${displayChannel(rootFlow.channel)} ${rootFlow.connected ? 'live' : rootFlow.active ? 'in flight' : 'idle'}` : ''}`,
       lastChange: allChanges.at(-1) || null,
@@ -839,6 +1002,7 @@ export function buildSiteTopology(events, options = {}) {
     edges,
     currentTargets: visible.currentTargets,
     changes: allChanges,
+    warnings,
     focus: focusChange && focusEdge ? { change: focusChange, edge: focusEdge, place: nodes.find(node => node.id === focusEdge.to) || null } : null,
     ...(topologyVersion > 1 ? {
       topologyVersion,
@@ -990,7 +1154,7 @@ function layoutContainmentTopology(topology, options = {}) {
     consecutiveGroups(rows).forEach((rowGroup, fragmentIndex) => {
       const fragmentNodes = territoryNodes.filter(node => rowGroup.includes(slots.get(node.id).row))
       const left = Math.min(...fragmentNodes.map(node => node.x)) - 24
-      const territoryTopPadding = territory === 'plugins' ? 44 : 24
+      const territoryTopPadding = territory === 'plugins' ? 64 : 24
       const top = Math.min(...fragmentNodes.map(node => node.y)) - territoryTopPadding
       const right = Math.max(...fragmentNodes.map(node => node.x + nodeW)) + 24
       const bottom = Math.max(...fragmentNodes.map(node => node.y + (nodeHeights[node.id] || nodeH))) + 24
@@ -1018,10 +1182,10 @@ function layoutContainmentTopology(topology, options = {}) {
   }
   for (const { plugin, nodes } of pluginGroups.values()) {
     const left = Math.min(...nodes.map(node => node.x)) - 10
-    const top = Math.min(...nodes.map(node => node.y)) - 10
+    const top = Math.min(...nodes.map(node => node.y)) - 34
     const right = Math.max(...nodes.map(node => node.x + nodeW)) + 10
     const bottom = Math.max(...nodes.map(node => node.y + (nodeHeights[node.id] || nodeH))) + 10
-    regions.push({ id: `plugin-region:${plugin.id}`, kind: 'plugin', territory: 'plugins', category: 'plugins', plugin, label: plugin.label, x: left, y: top, width: right - left, height: bottom - top, labelX: left + 10, labelY: top + 14 })
+    regions.push({ id: `plugin-region:${plugin.id}`, kind: 'plugin', territory: 'plugins', category: 'plugins', plugin, label: plugin.label, x: left, y: top, width: right - left, height: bottom - top, labelX: left + 10, labelY: top + 16 })
   }
 
   const maxX = Math.max(...placed.map(node => node.x + nodeW), padX + nodeW)
@@ -1126,64 +1290,131 @@ export function routeSiteTopologyEdges(nodes, edges, options = {}) {
   const compact = Boolean(options.compact)
   const nodeW = options.nodeW ?? 320
   const metrics = options.metrics || {}
+  const regions = options.regions || []
   const heightOf = id => metrics[id]?.h || metrics[id] || 104
   const byId = Object.fromEntries(nodes.map(node => [node.id, node]))
-  const channelTrunks = new Map()
-  const channelRowBranches = new Map()
-  const siteEdges = edges.filter(edge => edge.kind === 'channel' && (byId[edge.from]?.topologyRoot || edge.from === 'wp:site'))
-  const root = byId['wp:site']
-  if (!compact && root && siteEdges.length) {
-    const firstLaneX = Math.min(...siteEdges.map(edge => byId[edge.to]?.x).filter(Number.isFinite))
-    const channels = [...new Set(siteEdges.map(edge => edge.channel))]
-    for (const [index, channel] of channels.entries()) channelTrunks.set(channel, Math.max(root.x + nodeW + 4, firstLaneX - 24 - index * 14))
-    for (const edge of siteEdges) {
-      const target = byId[edge.to]
-      if (!target) continue
-      const key = `${edge.channel}:${target.y}`
-      channelRowBranches.set(key, Math.max(channelRowBranches.get(key) || 0, target.y + heightOf(target.id) + 12))
-    }
-  }
   const edgeGroups = new Map()
   for (const edge of edges) (edgeGroups.get(edge.to) || edgeGroups.set(edge.to, []).get(edge.to)).push(edge)
   const laneOffsets = new Map()
   for (const list of edgeGroups.values()) list.forEach((edge, index) => laneOffsets.set(edge.id, (index - (list.length - 1) / 2) * 12))
+
+  const normalizePoints = points => {
+    const unique = points.filter((point, index) => index === 0 || point[0] !== points[index - 1][0] || point[1] !== points[index - 1][1])
+    const result = []
+    for (const point of unique) {
+      const previous = result.at(-1)
+      const before = result.at(-2)
+      if (before && previous && ((before[0] === previous[0] && previous[0] === point[0]) || (before[1] === previous[1] && previous[1] === point[1]))) result[result.length - 1] = point
+      else result.push(point)
+    }
+    return result
+  }
+  const pathFromPoints = points => points.slice(1).reduce((path, point, index) => {
+    const previous = points[index]
+    return `${path}${previous[1] === point[1] ? 'H' : 'V'}${previous[1] === point[1] ? point[0] : point[1]}`
+  }, `M${points[0][0]} ${points[0][1]}`)
+  const routeInk = points => points.slice(1).reduce((total, point, index) => total + Math.abs(point[0] - points[index][0]) + Math.abs(point[1] - points[index][1]), 0)
+  const segmentBlocked = (start, end, ignoredIds) => nodes.some(node => {
+    if (ignoredIds.has(node.id) || node.future) return false
+    const left = node.x
+    const right = node.x + nodeW
+    const top = node.y
+    const bottom = node.y + heightOf(node.id)
+    if (start[1] === end[1]) {
+      const y = start[1]
+      return y > top && y < bottom && Math.max(Math.min(start[0], end[0]), left) < Math.min(Math.max(start[0], end[0]), right)
+    }
+    const x = start[0]
+    return x > left && x < right && Math.max(Math.min(start[1], end[1]), top) < Math.min(Math.max(start[1], end[1]), bottom)
+  })
+  const rowGutterY = target => {
+    // Each wrapped row owns the clear strip immediately above it. Using the
+    // territory's top for every row makes later branches descend through the
+    // cards in earlier rows.
+    if (compact) return target.y - 36
+    const territory = regions.find(region => region.kind === 'territory'
+      && region.territory === target.territory
+      && target.x >= region.x && target.x <= region.x + region.width
+      && target.y >= region.y && target.y <= region.y + region.height)
+    // A first-row territory shares the real gap after the preceding enclosure
+    // so its branch cannot run through either territory band. Wrapped rows use
+    // their local inter-row strip to avoid every card above them.
+    if (territory && target.y - territory.y <= 70) {
+      const sharedRow = regions.filter(region => region.kind === 'territory'
+        && target.y >= region.y && target.y <= region.y + region.height)
+      const rowTop = Math.min(...sharedRow.map(region => region.y), territory.y)
+      const previousBottom = Math.max(rowTop - 24, ...regions.filter(region => region.kind === 'territory'
+        && region.y + region.height <= rowTop).map(region => region.y + region.height))
+      return previousBottom + (rowTop - previousBottom) / 2
+    }
+    return target.y - 12
+  }
+  const regionSegmentBlocked = (start, end, targetTerritory) => regions.some(region => {
+    if (region.kind !== 'territory' || region.territory === targetTerritory) return false
+    if (start[1] === end[1]) {
+      const y = start[1]
+      return y > region.y && y < region.y + region.height && Math.max(Math.min(start[0], end[0]), region.x) < Math.min(Math.max(start[0], end[0]), region.x + region.width)
+    }
+    const x = start[0]
+    return x > region.x && x < region.x + region.width && Math.max(Math.min(start[1], end[1]), region.y) < Math.min(Math.max(start[1], end[1]), region.y + region.height)
+  })
 
   return edges.map(edge => {
     const from = byId[edge.from]
     const to = byId[edge.to]
     if (!from || !to) return { ...edge, path: null }
     const laneOffset = laneOffsets.get(edge.id) || 0
-    const trunkX = channelTrunks.get(edge.channel)
-    let path
+    const ignored = new Set([from.id, to.id])
+    const fromHeight = heightOf(from.id)
+    const toHeight = heightOf(to.id)
+    const sameRow = Math.abs(from.y - to.y) < 1
+    const forward = to.x >= from.x
     let pathPoints
-    let sentencePoints
-    if (trunkX !== undefined && edge.kind === 'channel' && (from.topologyRoot || edge.from === 'wp:site')) {
-      const branchY = channelRowBranches.get(`${edge.channel}:${to.y}`)
-      path = `M${from.x + nodeW} ${from.y + 15}H${trunkX}V${branchY}H${to.x - 12}V${to.y + 15}H${to.x}`
-      pathPoints = [[from.x + nodeW, from.y + 15], [trunkX, from.y + 15], [trunkX, branchY], [to.x - 12, branchY], [to.x - 12, to.y + 15], [to.x, to.y + 15]]
-      sentencePoints = pathPoints.slice(-3)
-    } else if (Math.abs(from.x - to.x) < 30 || compact) {
-      const x1 = from.x + nodeW / 2 + laneOffset
-      const y1 = from.y + heightOf(from.id)
-      const x2 = to.x + nodeW / 2 + laneOffset
-      const y2 = to.y
-      const bend = Math.max(38, Math.abs(y2 - y1) / 2)
-      path = `M${x1} ${y1}C${x1} ${y1 + bend} ${x2} ${y2 - bend} ${x2} ${y2}`
-      pathPoints = [[x1, y1], [x1, y1 + bend], [x2, y2 - bend], [x2, y2]]
-      sentencePoints = [[x2, y2 - 24], [x2, y2]]
+    let entryFace
+    if (sameRow) {
+      const directStart = [from.x + (forward ? nodeW : 0), from.y + 15 + laneOffset]
+      const directEnd = [to.x + (forward ? 0 : nodeW), to.y + 15 + laneOffset]
+      if (!segmentBlocked(directStart, directEnd, ignored)) {
+        pathPoints = [directStart, directEnd]
+        entryFace = forward ? 'left' : 'right'
+      } else {
+        const gutterY = rowGutterY(to)
+        pathPoints = [[from.x + nodeW / 2 + laneOffset, from.y], [from.x + nodeW / 2 + laneOffset, gutterY], [to.x + nodeW / 2 + laneOffset, gutterY], [to.x + nodeW / 2 + laneOffset, to.y]]
+        entryFace = 'top'
+      }
+    } else if (to.y > from.y) {
+      const directStart = [from.x + nodeW / 2 + laneOffset, from.y + fromHeight]
+      const directEnd = [to.x + nodeW / 2 + laneOffset, to.y]
+      if (Math.abs(directStart[0] - directEnd[0]) < 1 && !segmentBlocked(directStart, directEnd, ignored)) {
+        pathPoints = [directStart, directEnd]
+      } else {
+        const gutterY = rowGutterY(to)
+        const nearRight = from.x + nodeW + 24
+        const nearLeft = from.x - 24
+        const regionLeft = Math.min(...regions.filter(region => region.kind === 'territory').map(region => region.x), from.x) - 12
+        const regionRight = Math.max(...regions.filter(region => region.kind === 'territory').map(region => region.x + region.width), from.x + nodeW) + 12
+        const candidates = [to.x >= from.x ? nearRight : nearLeft, regionLeft, regionRight]
+          .filter((value, index, list) => list.indexOf(value) === index)
+          .filter(value => !regionSegmentBlocked([value, from.y + 15 + laneOffset], [value, gutterY], to.territory))
+          .toSorted((left, right) => Math.abs((from.x + nodeW / 2) - left) + Math.abs((to.x + nodeW / 2) - left) - (Math.abs((from.x + nodeW / 2) - right) + Math.abs((to.x + nodeW / 2) - right)))
+        const gutterX = candidates[0] ?? regionLeft
+        const routeRight = gutterX >= from.x + nodeW / 2
+        pathPoints = [[from.x + (routeRight ? nodeW : 0), from.y + 15 + laneOffset], [gutterX, from.y + 15 + laneOffset], [gutterX, gutterY], [to.x + nodeW / 2 + laneOffset, gutterY], [to.x + nodeW / 2 + laneOffset, to.y]]
+      }
+      entryFace = 'top'
     } else {
-      const forward = to.x >= from.x
-      const x1 = from.x + (forward ? nodeW : 0)
-      const y1 = from.y + 15 + laneOffset
-      const x2 = to.x + (forward ? 0 : nodeW)
-      const y2 = to.y + 15 + laneOffset
-      const bend = Math.max(44, Math.abs(x2 - x1) / 2)
-      path = `M${x1} ${y1}C${x1 + (forward ? bend : -bend)} ${y1} ${x2 + (forward ? -bend : bend)} ${y2} ${x2} ${y2}`
-      pathPoints = [[x1, y1], [x1 + (forward ? bend : -bend), y1], [x2 + (forward ? -bend : bend), y2], [x2, y2]]
-      sentencePoints = pathPoints.slice(-2)
+      const gutterY = Math.max(...regions.filter(region => region.kind === 'territory' && to.y >= region.y && to.y <= region.y + region.height).map(region => region.y + region.height), to.y + toHeight) + 12
+      pathPoints = [[from.x + nodeW / 2 + laneOffset, from.y], [from.x + nodeW / 2 + laneOffset, gutterY], [to.x + nodeW / 2 + laneOffset, gutterY], [to.x + nodeW / 2 + laneOffset, to.y + toHeight]]
+      entryFace = 'bottom'
     }
+    pathPoints = normalizePoints(pathPoints)
+    const path = pathFromPoints(pathPoints)
+    // Camera framing owns the local landing sentence, not every corridor the
+    // route needed to traverse a large map. The target, label, and final
+    // ingress segment are sufficient to keep the spoken subject whole.
+    const sentencePoints = pathPoints.slice(-2)
     const resting = edge.kind === 'channel' && !edge.active && !edge.current
-    const vertical = Math.abs(from.x - to.x) < 30 || compact
+    const vertical = entryFace === 'top' || entryFace === 'bottom' || compact
     const xs = pathPoints.map(point => point[0])
     const ys = pathPoints.map(point => point[1])
     const sentenceXs = sentencePoints.map(point => point[0])
@@ -1192,9 +1423,13 @@ export function routeSiteTopologyEdges(nodes, edges, options = {}) {
       ...edge,
       laneOffset,
       path,
-      labelX: resting ? (trunkX ?? from.x + nodeW) + 8 : vertical ? to.x + nodeW / 2 + laneOffset : to.x - 18,
+      segmentCount: Math.max(0, pathPoints.length - 1),
+      cornerCount: Math.max(0, pathPoints.length - 2),
+      ink: routeInk(pathPoints),
+      entryFace,
+      labelX: resting ? from.x + nodeW + 8 : vertical ? to.x + nodeW / 2 + laneOffset : forward ? to.x - 18 : to.x + nodeW + 18,
       labelY: resting ? from.y + 19 + (edge.channelLabelIndex || 0) * (options.edgeLabelStep || 17) : vertical ? to.y - 12 : to.y - 10,
-      labelAnchor: resting ? 'start' : vertical ? 'middle' : 'end',
+      labelAnchor: resting ? 'start' : vertical ? 'middle' : forward ? 'end' : 'start',
       bounds: { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) },
       sentenceBounds: { x: Math.min(...sentenceXs), y: Math.min(...sentenceYs), width: Math.max(...sentenceXs) - Math.min(...sentenceXs), height: Math.max(...sentenceYs) - Math.min(...sentenceYs) },
     }

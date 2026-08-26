@@ -136,6 +136,13 @@ function renderHeader(model) {
   if (signal.querySelector('span').textContent !== label) signal.querySelector('span').textContent = label
 }
 
+function renderWarnings(topology) {
+  const element = $('observer-warning')
+  const warning = topology.warnings?.find(item => item.id === 'observer-version')
+  element.hidden = !warning
+  element.title = warning ? `Expected observer ${warning.expectedVersion || 'current'}; reported ${warning.reportedVersion || 'no version'}` : ''
+}
+
 function renderSessions(model) {
   const select = $('session-select')
   const currentSessionId = state.liveModel.daemon?.sessionId || state.liveModel.session?.sessionId
@@ -460,6 +467,7 @@ function updateCamera() {
   if (!graph || !state.camera) return
   const { x, y, width, height } = state.camera
   graph.svg.setAttribute('viewBox', `${x} ${y} ${width} ${height}`)
+  setSvgAttributes(graph.grid, { x, y, width, height })
   const fittedWidth = Math.max(1, state.cameraBounds?.width || width)
   graph.zoomValue.textContent = `${Math.round(fittedWidth / width * 100)}%`
 }
@@ -506,7 +514,7 @@ function ensureGraphShell(flow) {
   flow.append(shell)
 
   const graph = state.graph = {
-    shell, svg, world, laneLayer, containmentLayer, edgeLayer, nodeLayer, controls, filters, empty, zoomValue,
+    shell, svg, grid, world, laneLayer, containmentLayer, edgeLayer, nodeLayer, controls, filters, empty, zoomValue,
     nodeElements: new Map(), edgeElements: new Map(), laneElements: new Map(), containmentElements: new Map(),
     model: null, topology: null, pan: null,
   }
@@ -804,7 +812,7 @@ function renderComponents(model, topology = currentTopology(model)) {
   const byGraphId = Object.fromEntries(graphNodes.map(item => [item.id, item]))
   const filteredGraphEdges = graphEdges.filter(edge => territoryAllows(byGraphId[edge.to] || {}))
   const renderedGraphEdges = siteSession ? visibleTopologyEdges(filteredGraphEdges, topology.nodes.filter(node => !node.future && territoryAllows(node)).length) : filteredGraphEdges
-  const routedEdges = new Map(routeSiteTopologyEdges(graphNodes, renderedGraphEdges, { compact, nodeW, metrics, edgeLabelStep }).map(edge => [edge.id, edge]))
+  const routedEdges = new Map(routeSiteTopologyEdges(graphNodes, renderedGraphEdges, { compact, nodeW, metrics, edgeLabelStep, regions: layoutLanes }).map(edge => [edge.id, edge]))
 
   const labelStacks = new Map()
 
@@ -862,7 +870,7 @@ function renderComponents(model, topology = currentTopology(model)) {
       graph.edgeLayer.append(entry.group)
     }
     entry.future = edge.future
-    setSvgAttributes(entry.path, { d: pathData, class: pathClass, 'data-edge-id': edge.id, 'data-flow-state': edge.flowState, 'data-from': edge.from, 'data-to': edge.to, style: edge.active ? `--flow-duration:${edge.duration}ms` : null, 'aria-hidden': edge.future ? true : null, 'marker-end': edge.kind === 'link' || edge.future ? null : 'url(#graph-arrow)' })
+    setSvgAttributes(entry.path, { d: pathData, class: pathClass, 'data-edge-id': edge.id, 'data-flow-state': edge.flowState, 'data-from': edge.from, 'data-to': edge.to, 'data-segment-count': routed.segmentCount, 'data-corner-count': routed.cornerCount, 'data-route-ink': Math.round(routed.ink || 0), 'data-entry-face': routed.entryFace, style: edge.active ? `--flow-duration:${edge.duration}ms` : null, 'aria-hidden': edge.future ? true : null, 'marker-end': edge.kind === 'link' || edge.future ? null : 'url(#graph-arrow)' })
     setSvgAttributes(entry.hit, { d: pathData, tabindex: edge.future ? null : 0, role: edge.future ? null : 'button', 'aria-label': edge.future ? null : `Inspect ${edge.label || edge.kind} flow`, 'data-edge-id': edge.id })
     entry.hit.hidden = edge.future
     if (edge.label && !edge.future) {
@@ -1042,6 +1050,7 @@ function renderPlaceInspector(model, topology) {
     ['Transports', place.transports?.join(' · ')],
     ['Plugins', place.plugins?.join(' · ')],
     ['Last sequence', place.lastSeq],
+    ['System evidence', place.systemEvidence?.length || null],
   ]))
   panel.replaceChildren(facts, inspectorChanges(place.changes || [], model))
 }
@@ -1098,6 +1107,7 @@ function render(model = currentProjection()) {
   shell.dataset.appState = 'ready'
   shell.dataset.mode = state.mode
   renderHeader(model)
+  renderWarnings(topology)
   renderSessions(model)
   renderOrbit(model, topology)
   renderComponents(model, topology)
@@ -1215,7 +1225,7 @@ async function applyDeepLink() {
 
     if (state.mode !== 'live' && params.has('seq')) {
       const sequence = Number(params.get('seq'))
-      const index = state.replayEvents.findIndex(event => event.seq === sequence)
+      const index = state.replayEvents.findLastIndex(event => event.seq <= sequence)
       if (index >= 0) state.cursor = index
     }
 

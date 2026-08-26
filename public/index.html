@@ -135,6 +135,10 @@ svg { display: block; }
 .live-signal[data-status="offline"] i { background: var(--danger); }
 @keyframes status-pulse { 0%, 42% { box-shadow: 0 0 6px color-mix(in oklch, var(--live) 35%, transparent); } 78%, 100% { box-shadow: 0 0 16px transparent; } }
 
+.observer-warning { position: fixed; z-index: 35; top: calc(var(--chrome) + 10px); right: 12px; display: flex; align-items: baseline; gap: 8px; max-width: min(440px, calc(100vw - 24px)); padding: 8px 11px; border: 1px solid color-mix(in oklch, var(--attention) 46%, var(--border)); border-radius: 7px; background: color-mix(in oklch, var(--surface-raised) 92%, var(--attention)); color: var(--text-2); font-size: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, .24); }
+.observer-warning strong { color: var(--attention); font-weight: 650; white-space: nowrap; }
+.observer-warning span { min-width: 0; }
+
 .map-surface { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--canvas); }
 .component-flow { width: 100%; height: 100%; min-height: 0; overflow: hidden; }
 .graph-shell { position: relative; width: 100%; height: 100%; overflow: hidden; }
@@ -295,6 +299,10 @@ svg { display: block; }
   .brand { min-width: auto; }
 }
 
+@media (max-width: 520px) {
+  .observer-warning { right: 8px; left: 8px; max-width: none; align-items: flex-start; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
   .energy-particle { display: none; }
@@ -364,6 +372,11 @@ svg { display: block; }
 
       <span class="live-signal" id="live-signal" data-status="connecting"><i></i><span>Connecting</span></span>
     </header>
+
+    <div class="observer-warning" id="observer-warning" role="status" aria-live="polite" hidden>
+      <strong>Observer out of date</strong>
+      <span>Some activity may not be recorded.</span>
+    </div>
 
     <main class="map-surface" id="map" aria-label="WordPress agent work topology">
       <div class="component-flow" id="component-flow" aria-live="polite"></div>
@@ -531,6 +544,13 @@ function renderHeader(model) {
   signal.dataset.status = live ? 'live' : state.mode === 'live' ? 'offline' : 'replay'
   const label = live ? 'Live' : state.mode === 'live' ? 'Recorded' : state.mode === 'replay' ? 'Replay' : 'Timelapse'
   if (signal.querySelector('span').textContent !== label) signal.querySelector('span').textContent = label
+}
+
+function renderWarnings(topology) {
+  const element = $('observer-warning')
+  const warning = topology.warnings?.find(item => item.id === 'observer-version')
+  element.hidden = !warning
+  element.title = warning ? `Expected observer ${warning.expectedVersion || 'current'}; reported ${warning.reportedVersion || 'no version'}` : ''
 }
 
 function renderSessions(model) {
@@ -857,6 +877,7 @@ function updateCamera() {
   if (!graph || !state.camera) return
   const { x, y, width, height } = state.camera
   graph.svg.setAttribute('viewBox', `${x} ${y} ${width} ${height}`)
+  setSvgAttributes(graph.grid, { x, y, width, height })
   const fittedWidth = Math.max(1, state.cameraBounds?.width || width)
   graph.zoomValue.textContent = `${Math.round(fittedWidth / width * 100)}%`
 }
@@ -903,7 +924,7 @@ function ensureGraphShell(flow) {
   flow.append(shell)
 
   const graph = state.graph = {
-    shell, svg, world, laneLayer, containmentLayer, edgeLayer, nodeLayer, controls, filters, empty, zoomValue,
+    shell, svg, grid, world, laneLayer, containmentLayer, edgeLayer, nodeLayer, controls, filters, empty, zoomValue,
     nodeElements: new Map(), edgeElements: new Map(), laneElements: new Map(), containmentElements: new Map(),
     model: null, topology: null, pan: null,
   }
@@ -1201,7 +1222,7 @@ function renderComponents(model, topology = currentTopology(model)) {
   const byGraphId = Object.fromEntries(graphNodes.map(item => [item.id, item]))
   const filteredGraphEdges = graphEdges.filter(edge => territoryAllows(byGraphId[edge.to] || {}))
   const renderedGraphEdges = siteSession ? visibleTopologyEdges(filteredGraphEdges, topology.nodes.filter(node => !node.future && territoryAllows(node)).length) : filteredGraphEdges
-  const routedEdges = new Map(routeSiteTopologyEdges(graphNodes, renderedGraphEdges, { compact, nodeW, metrics, edgeLabelStep }).map(edge => [edge.id, edge]))
+  const routedEdges = new Map(routeSiteTopologyEdges(graphNodes, renderedGraphEdges, { compact, nodeW, metrics, edgeLabelStep, regions: layoutLanes }).map(edge => [edge.id, edge]))
 
   const labelStacks = new Map()
 
@@ -1259,7 +1280,7 @@ function renderComponents(model, topology = currentTopology(model)) {
       graph.edgeLayer.append(entry.group)
     }
     entry.future = edge.future
-    setSvgAttributes(entry.path, { d: pathData, class: pathClass, 'data-edge-id': edge.id, 'data-flow-state': edge.flowState, 'data-from': edge.from, 'data-to': edge.to, style: edge.active ? `--flow-duration:${edge.duration}ms` : null, 'aria-hidden': edge.future ? true : null, 'marker-end': edge.kind === 'link' || edge.future ? null : 'url(#graph-arrow)' })
+    setSvgAttributes(entry.path, { d: pathData, class: pathClass, 'data-edge-id': edge.id, 'data-flow-state': edge.flowState, 'data-from': edge.from, 'data-to': edge.to, 'data-segment-count': routed.segmentCount, 'data-corner-count': routed.cornerCount, 'data-route-ink': Math.round(routed.ink || 0), 'data-entry-face': routed.entryFace, style: edge.active ? `--flow-duration:${edge.duration}ms` : null, 'aria-hidden': edge.future ? true : null, 'marker-end': edge.kind === 'link' || edge.future ? null : 'url(#graph-arrow)' })
     setSvgAttributes(entry.hit, { d: pathData, tabindex: edge.future ? null : 0, role: edge.future ? null : 'button', 'aria-label': edge.future ? null : `Inspect ${edge.label || edge.kind} flow`, 'data-edge-id': edge.id })
     entry.hit.hidden = edge.future
     if (edge.label && !edge.future) {
@@ -1439,6 +1460,7 @@ function renderPlaceInspector(model, topology) {
     ['Transports', place.transports?.join(' · ')],
     ['Plugins', place.plugins?.join(' · ')],
     ['Last sequence', place.lastSeq],
+    ['System evidence', place.systemEvidence?.length || null],
   ]))
   panel.replaceChildren(facts, inspectorChanges(place.changes || [], model))
 }
@@ -1495,6 +1517,7 @@ function render(model = currentProjection()) {
   shell.dataset.appState = 'ready'
   shell.dataset.mode = state.mode
   renderHeader(model)
+  renderWarnings(topology)
   renderSessions(model)
   renderOrbit(model, topology)
   renderComponents(model, topology)
@@ -1612,7 +1635,7 @@ async function applyDeepLink() {
 
     if (state.mode !== 'live' && params.has('seq')) {
       const sequence = Number(params.get('seq'))
-      const index = state.replayEvents.findIndex(event => event.seq === sequence)
+      const index = state.replayEvents.findLastIndex(event => event.seq <= sequence)
       if (index >= 0) state.cursor = index
     }
 

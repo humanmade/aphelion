@@ -31,6 +31,10 @@ files: [src/sidecar/**, src/mu-plugin/**]
   from: roadmap
 - [x] Show who is connected right now {#observe-site-presence}
   from: roadmap
+- [x] Observe user lifecycle and record comment lifecycle as evidence on its post {#observe-site-people-comments}
+  from: layman QA
+- [x] Record comment parent identity and report deployed observer-version drift {#observe-site-member-context}
+  from: member-evidence QA
 
 ## Show the work live {#board}
 tech: adapt upstream public/index.html; split into concat-able sources
@@ -54,6 +58,12 @@ files: [src/board/**]
   from: live QA
 - [x] Fold revision evidence, deduplicate semantic confirmations, preserve rotated site identity, and compose small maps {#board-wide-run-correctness}
   from: wide-run QA
+- [x] Route flows by the shortest honest path and keep the grid continuous through camera movement {#board-layman-canvas}
+  from: layman QA
+- [x] Translate WordPress nouns for owners and fold system bookkeeping into root evidence {#board-owner-nouns}
+  from: layman QA
+- [x] Render comment member verbs, deduplicate lifecycle hooks, and retain user history in the inspector {#board-member-evidence}
+  from: member-evidence QA
 
 ## Replay any session {#replay}
 tech: scrub UI over trail; sparse snapshot index for seeking
@@ -62,6 +72,7 @@ files: [src/replay/**]
 - [x] Scrub through a past session on the board {#replay-scrub}
   from: roadmap
 - [x] Make replay position explicit and auto-play timelapse over visual events {#replay-liveness}
+- [x] Keep replay state and deep links scoped to the playhead clock {#replay-one-clock}
   from: post-0.1 QA
 
 ## Render the timelapse {#timelapse}

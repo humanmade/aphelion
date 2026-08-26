@@ -1,6 +1,6 @@
 {
   "name": "aphelion",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local flight recorder, live map, replay, and timelapse for AI agents working on WordPress.",
   "type": "module",
   "bin": {

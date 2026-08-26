@@ -10,6 +10,8 @@ let root
 const qaRoot = path.resolve('qa-artifacts/2026-08-25/work-order-g')
 const qaHRoot = path.resolve('qa-artifacts/2026-08-25/work-order-h')
 const qaIRoot = path.resolve('qa-artifacts/2026-08-25/work-order-i')
+const qaJRoot = path.resolve('qa-artifacts/2026-08-25/work-order-j')
+const qaKRoot = path.resolve('qa-artifacts/2026-08-26/work-order-k')
 const qaScreenshot = async (page, testInfo, name) => {
   fs.mkdirSync(qaRoot, { recursive: true })
   await page.screenshot({ path: path.join(qaRoot, `${name}-${testInfo.project.name}.png`) })
@@ -22,6 +24,14 @@ const qaIScreenshot = async (page, testInfo, name) => {
   fs.mkdirSync(qaIRoot, { recursive: true })
   await page.screenshot({ path: path.join(qaIRoot, `${name}-${testInfo.project.name}.png`) })
 }
+const qaJScreenshot = async (page, testInfo, name) => {
+  fs.mkdirSync(qaJRoot, { recursive: true })
+  await page.screenshot({ path: path.join(qaJRoot, `${name}-${testInfo.project.name}.png`) })
+}
+const qaKScreenshot = async (page, testInfo, name) => {
+  fs.mkdirSync(qaKRoot, { recursive: true })
+  await page.screenshot({ path: path.join(qaKRoot, `${name}-${testInfo.project.name}.png`) })
+}
 
 test.beforeAll(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-browser-'))
@@ -31,6 +41,7 @@ test.beforeAll(async () => {
     { source: 'qa', kind: 'agent.action.declared', data: { summary: 'Update the QA draft', requestId: 'qa-journey', objectType: 'post', objectId: 42, postType: 'page', channel: 'wp-admin', transport: 'browser' } },
     { source: 'mcp', kind: 'presence.ready', data: { connectionId: 'mcp-qa', requestId: 'qa-journey', actor: 'QA agent', channel: 'mcp', transport: 'hook' } },
     { source: 'wp', kind: 'wp.post_meta.updated', data: { summary: 'Page metadata updated', requestId: 'qa-journey', objectType: 'post-meta', objectId: 42, postType: 'page', metaKey: '_qa_seed', channel: 'rest', transport: 'http' } },
+    { source: 'wp', kind: 'presence.heartbeat', data: { connectionId: 'qa-heartbeat', channel: 'rest', transport: 'http' } },
     { source: 'wp', kind: 'wp.post.updated', data: { summary: 'WordPress post updated', requestId: 'qa-journey', objectType: 'post', objectId: 42, title: 'QA draft', status: 'draft', blockCount: 4, channel: 'rest', transport: 'http' } },
     { source: 'mcp', kind: 'presence.close', data: { connectionId: 'mcp-qa', requestId: 'qa-journey', actor: 'QA agent', channel: 'mcp', transport: 'hook' } },
     { source: 'qa', kind: 'agent.action.declared', data: { summary: 'Temporarily edit site tagline', requestId: 'qa-setting', objectType: 'option', name: 'blogdescription', channel: 'wp-cli', transport: 'docker-exec' } },
@@ -154,7 +165,8 @@ test('v3 keeps the map quiet while cards and inspector retain the evidence', asy
   await page.getByRole('slider', { name: 'Replay position' }).fill(String(firstPageEffect))
   await expect(page.locator('[data-node-id="wp:post:42"]')).not.toHaveClass(/future/)
   await expect(page.locator('[data-node-id="wp:post:42"] .place-name')).toHaveText('Page #42')
-  await expect(page.locator('[data-node-id="wp:post:42"] .place-state')).toHaveText('Updated')
+  // Member evidence establishes the place, not its state; no post status is known yet.
+  await expect(page.locator('[data-node-id="wp:post:42"] .place-state')).toBeHidden()
   await page.getByRole('slider', { name: 'Replay position' }).fill(await page.getByRole('slider', { name: 'Replay position' }).getAttribute('max'))
   await expect(page.locator('.graph-node.entity.future')).toHaveCount(0)
 
@@ -170,8 +182,8 @@ test('deep links reopen a session, replay moment, and inspector selection', asyn
   const sessions = await fetch(`${daemon.url}/api/sessions`).then(response => response.json())
   const sessionId = sessions[0].id
   const events = await fetch(`${daemon.url}/api/sessions/${encodeURIComponent(sessionId)}/events`).then(response => response.json())
-  const target = events.find(event => event.data?.metaKey === '_qa_seed')
-  const targetIndex = events.filter(event => event.kind !== 'presence.heartbeat').findIndex(event => event.seq === target.seq)
+  const target = events.find(event => event.data?.connectionId === 'qa-heartbeat')
+  const targetIndex = events.filter(event => event.kind !== 'presence.heartbeat').findLastIndex(event => event.seq <= target.seq)
   const url = new URL(daemon.url)
   url.searchParams.set('keep', 'yes')
   url.searchParams.set('session', sessionId)
@@ -184,6 +196,8 @@ test('deep links reopen a session, replay moment, and inspector selection', asyn
   await expect(page.locator('#session-select')).toHaveValue(sessionId)
   await expect(page.getByRole('tab', { name: 'Replay' })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('slider', { name: 'Replay position' })).toHaveValue(String(targetIndex))
+  await expect(page.locator('[data-node-id="wp:post:42"] .place-name')).toHaveText('Page #42')
+  await expect(page.locator('[data-node-id="wp:post:42"] .place-state')).toBeHidden()
   await expect(page.locator('.app-shell')).toHaveAttribute('data-inspector-open', 'true')
   await expect(page.getByRole('tab', { name: 'Trail' })).toHaveAttribute('aria-selected', 'true')
   expect(new URL(page.url()).searchParams.get('keep')).toBe('yes')
@@ -205,6 +219,53 @@ test('deep links reopen a session, replay moment, and inspector selection', asyn
   const fallbackUrl = new URL(page.url())
   expect(fallbackUrl.searchParams.get('keep')).toBe('yes')
   expect(fallbackUrl.searchParams.has('session')).toBe(false)
+})
+
+test('replay keeps created content live until its recorded deletion', async ({ page }) => {
+  const trailRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-one-clock-'))
+  const siteDaemon = await startDaemon({ target: 'http://localhost:8081', targetType: 'site', trailDirectory: path.join(trailRoot, 'trails'), port: 6450, watch: false })
+  const ingest = event => fetch(`${siteDaemon.url}/ingest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(event) })
+  try {
+    await ingest({ source: 'wp', kind: 'wp.post.created', data: { requestId: 'create', objectType: 'post', objectId: 484, postType: 'post', title: 'K scratch', status: 'draft', blockCount: 1, channel: 'wp-cli' } })
+    await ingest({ source: 'wp', kind: 'presence.heartbeat', data: { connectionId: 'one-clock-heartbeat', channel: 'wp-cli' } })
+    await ingest({ source: 'wp', kind: 'wp.post.deleted', data: { requestId: 'delete', objectType: 'post', objectId: 484, postType: 'post', title: 'K scratch', channel: 'wp-cli' } })
+    await ingest({ source: 'wp', kind: 'wp.option.updated', data: { requestId: 'later', objectType: 'option', name: 'blogdescription', channel: 'wp-cli' } })
+
+    const sessions = await fetch(`${siteDaemon.url}/api/sessions`).then(response => response.json())
+    const sessionId = sessions[0].id
+    const events = await fetch(`${siteDaemon.url}/api/sessions/${encodeURIComponent(sessionId)}/events`).then(response => response.json())
+    const heartbeat = events.find(event => event.data?.connectionId === 'one-clock-heartbeat')
+    const playbackEvents = events.filter(event => event.kind !== 'presence.heartbeat')
+    const beforeDelete = playbackEvents.findLastIndex(event => event.seq <= heartbeat.seq)
+    const afterDelete = playbackEvents.findIndex(event => event.data?.requestId === 'later')
+
+    await page.goto(`${siteDaemon.url}/?session=${encodeURIComponent(sessionId)}&mode=replay&seq=${heartbeat.seq}`)
+    const place = page.locator('[data-node-id="wp:post:484"]')
+    await expect(page.getByRole('slider', { name: 'Replay position' })).toHaveValue(String(beforeDelete))
+    await expect(place).toHaveAttribute('data-size-tier', 'standard')
+    await expect(place.locator('.place-state')).toHaveText('Draft · 1 block')
+    const deepLinkProjection = await place.evaluate(element => ({
+      transform: element.getAttribute('transform'),
+      tier: element.dataset.sizeTier,
+      state: element.querySelector('.place-state').textContent,
+      hidden: element.querySelector('.place-state').hidden,
+    }))
+
+    await page.getByRole('slider', { name: 'Replay position' }).fill(String(afterDelete))
+    await expect(place).toHaveAttribute('data-size-tier', 'tombstone')
+    await expect(place.locator('.place-state')).toBeHidden()
+
+    await page.getByRole('slider', { name: 'Replay position' }).fill(String(beforeDelete))
+    expect(await place.evaluate(element => ({
+      transform: element.getAttribute('transform'),
+      tier: element.dataset.sizeTier,
+      state: element.querySelector('.place-state').textContent,
+      hidden: element.querySelector('.place-state').hidden,
+    }))).toEqual(deepLinkProjection)
+  } finally {
+    await siteDaemon.close('one-clock-test')
+    fs.rmSync(trailRoot, { recursive: true, force: true })
+  }
 })
 
 test('keyed rendering preserves card identity and a user-moved camera across live events', async ({ page }) => {
@@ -419,7 +480,7 @@ test('twenty places occupy stable category lanes with one resting channel label'
 
       await ingest({ source: 'agent', kind: 'agent.action.declared', data: { requestId: 'twenty-active', objectType: 'post', objectId: 19, postType: 'page', changedProperties: ['content'], summary: 'Update Page 19', channel: 'wp-cli' } })
       const particlePath = page.locator('[data-edge-id="channel:wp-cli:wp:post:19"] .energy-particle animateMotion')
-      await expect(particlePath).toHaveAttribute('path', /^M[^CQSA]*H[^CQSA]*V[^CQSA]*H[^CQSA]*V[^CQSA]*H[^CQSA]*$/)
+      await expect(particlePath).toHaveAttribute('path', /^M[^CQSA]*(?:[HV][^CQSA]*)+$/)
     }
     const livePositions = await page.locator('.graph-node').evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.dataset.nodeId, node.getAttribute('transform')])))
     await page.getByRole('tab', { name: 'Replay' }).click()
@@ -748,6 +809,223 @@ test('twenty content places form an append-stable balanced block', async ({ page
     await qaIScreenshot(page, testInfo, '20-place-balanced')
   } finally {
     await siteDaemon.close('composition-20-test')
+    fs.rmSync(trailRoot, { recursive: true, force: true })
+  }
+})
+
+test('layman map keeps routes short, grid continuous, and WordPress nouns owner-readable', async ({ page }, testInfo) => {
+  test.slow()
+  const trailRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-layman-'))
+  const siteDaemon = await startDaemon({ target: 'http://localhost:8081', targetType: 'site', trailDirectory: path.join(trailRoot, 'trails'), port: 6430, watch: false })
+  const ingest = event => fetch(`${siteDaemon.url}/ingest`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(event) })
+  const events = [
+    { source: 'sidecar', kind: 'runtime.site.identity', data: { siteName: 'Accelerate Demo', channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.post.created', data: { requestId: 'scratch', objectType: 'post', objectId: 480, postType: 'post', title: 'Multi-category scratch', status: 'draft', channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.post.updated', data: { requestId: 'home', objectType: 'post', objectId: 339, postType: 'page', title: 'Home', status: 'publish', channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.term.created', data: { requestId: 'category', objectType: 'term', objectId: 52, taxonomy: 'category', title: 'Multi-category QA', channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.term.created', data: { requestId: 'menu', objectType: 'term', objectId: 53, taxonomy: 'nav_menu', title: 'Aphelion QA menu', channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.option.updated', data: { requestId: 'accelerate', objectType: 'option', name: 'accelerate_outbound_tracking_enabled', channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.option.updated', data: { requestId: 'tagline', objectType: 'option', name: 'blogdescription', channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.option.updated', data: { requestId: 'user', objectType: 'option', name: 'user_count', channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.user.created', data: { requestId: 'user', objectType: 'user', objectId: 72, displayName: 'Aphelion Reviewer', roles: ['subscriber'], channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.user.role_changed', data: { requestId: 'role', objectType: 'user', objectId: 72, displayName: 'Aphelion Reviewer', role: 'editor', roles: ['editor'], channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.comment.created', data: { requestId: 'comment', objectType: 'comment', objectId: 91, postId: 339, postType: 'page', postTitle: 'Home', commentStatus: 'approve', channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.comment.status_changed', data: { requestId: 'comment-delete', objectType: 'comment', objectId: 91, postId: 339, postType: 'page', postTitle: 'Home', commentStatus: 'trash', channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.comment.deleted', data: { requestId: 'comment-delete', objectType: 'comment', objectId: 91, postId: 339, postType: 'page', postTitle: 'Home', commentStatus: 'delete', channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.user.deleted', data: { requestId: 'user-delete', objectType: 'user', objectId: 72, displayName: 'Aphelion Reviewer', roles: ['editor'], channel: 'wp-cli' } },
+    { source: 'wp', kind: 'presence.close', data: { requestId: 'observer-close', connectionId: 'observer-close', channel: 'wp-cli' } },
+  ]
+  try {
+    for (const event of events) await ingest(event)
+    await page.goto(siteDaemon.url)
+    await expect(page.locator('.graph-node.entity')).toHaveCount(7)
+    await expect(page.locator('[data-node-id="wp:option:user_count"]')).toHaveCount(0)
+    await expect(page.locator('[data-node-id="wp:term:53"] .place-type')).toHaveText('Menu')
+    await expect(page.locator('[data-node-id="wp:site"] .place-state')).toContainText('7 places touched')
+    const user = page.locator('[data-node-id="wp:user:72"]')
+    await expect(user.locator('.place-name')).toHaveText('Aphelion Reviewer')
+    await expect(user).toHaveAttribute('data-territory', 'people')
+    await expect(user).toHaveAttribute('data-size-tier', 'tombstone')
+    await expect(user.locator('.place-state')).toBeHidden()
+
+    const routing = await page.evaluate(() => {
+      const paths = [...document.querySelectorAll('.graph-edge.channel:not(.future)')]
+      const regions = [...document.querySelectorAll('.territory-region')].map(group => {
+        const rect = group.querySelector('rect')
+        return { territory: group.dataset.territory, x: +rect.getAttribute('x'), y: +rect.getAttribute('y'), width: +rect.getAttribute('width'), height: +rect.getAttribute('height') }
+      })
+      const root = document.querySelector('[data-node-id="wp:site"]')
+      const rootMatrix = root.transform.baseVal.consolidate().matrix
+      const rootWidth = +root.querySelector('foreignObject').getAttribute('width')
+      const targetXs = paths.map(path => document.querySelector(`[data-node-id="${path.dataset.to}"]`).transform.baseVal.consolidate().matrix.e)
+      const trunkX = Math.max(rootMatrix.e + rootWidth + 4, Math.min(...targetXs) - 24)
+      let oldInk = 0
+      let ink = 0
+      let segments = 0
+      const crossings = []
+      const cardHits = []
+      for (const path of paths) {
+        const target = document.querySelector(`[data-node-id="${path.dataset.to}"]`)
+        const targetMatrix = target.transform.baseVal.consolidate().matrix
+        const targetHeight = +target.querySelector('foreignObject').getAttribute('height')
+        const branchY = targetMatrix.f + targetHeight + 12
+        oldInk += Math.abs(rootMatrix.e + rootWidth - trunkX) + Math.abs(rootMatrix.f + 15 - branchY) + Math.abs(trunkX - (targetMatrix.e - 12)) + Math.abs(branchY - (targetMatrix.f + 15)) + 12
+        ink += +path.dataset.routeInk
+        segments += +path.dataset.segmentCount
+        const targetTerritory = target.dataset.territory
+        const length = path.getTotalLength()
+        for (let distance = 2; distance < length - 2; distance += 2) {
+          const point = path.getPointAtLength(distance)
+          if (regions.some(region => region.territory !== targetTerritory && point.x > region.x + 1 && point.x < region.x + region.width - 1 && point.y > region.y + 1 && point.y < region.y + region.height - 1)) {
+            crossings.push(path.dataset.edgeId)
+            break
+          }
+        }
+        const otherCards = [...document.querySelectorAll('.graph-node.entity:not(.future)')].filter(node => node.dataset.nodeId !== path.dataset.to).map(node => {
+          const matrix = node.transform.baseVal.consolidate().matrix
+          const foreign = node.querySelector('foreignObject')
+          return { x: matrix.e, y: matrix.f, width: +foreign.getAttribute('width'), height: +foreign.getAttribute('height') }
+        })
+        for (let distance = 2; distance < length - 2; distance += 2) {
+          const point = path.getPointAtLength(distance)
+          if (otherCards.some(card => point.x > card.x + 1 && point.x < card.x + card.width - 1 && point.y > card.y + 1 && point.y < card.y + card.height - 1)) {
+            cardHits.push(path.dataset.edgeId)
+            break
+          }
+        }
+      }
+      const home = paths.find(path => path.dataset.to === 'wp:post:339')
+      return { crossings: [...new Set(crossings)], cardHits: [...new Set(cardHits)], ink, oldInk, segments, edgeCount: paths.length, homeCorners: +home.dataset.cornerCount }
+    })
+    if (testInfo.project.name === 'desktop') expect(routing.crossings).toEqual([])
+    expect(routing.cardHits).toEqual([])
+    if (testInfo.project.name === 'desktop') expect(routing.homeCorners).toBeLessThanOrEqual(2)
+    expect(routing.segments).toBeLessThan(routing.edgeCount * 5)
+    if (testInfo.project.name === 'desktop') expect(routing.ink).toBeLessThan(routing.oldInk)
+
+    const gridCoversView = () => page.locator('.work-graph').evaluate(svg => {
+      const view = svg.viewBox.baseVal
+      const grid = svg.querySelector('.graph-grid-fill')
+      const x = +grid.getAttribute('x'), y = +grid.getAttribute('y'), width = +grid.getAttribute('width'), height = +grid.getAttribute('height')
+      const epsilon = .01
+      return x <= view.x + epsilon && y <= view.y + epsilon && x + width + epsilon >= view.x + view.width && y + height + epsilon >= view.y + view.height
+    })
+    expect(await gridCoversView()).toBe(true)
+    await expect(page.locator('.playback-caption')).toContainText('WP-CLI disconnected')
+    expect(await page.locator('.playback-caption').evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+    await qaJScreenshot(page, testInfo, 'seven-place-full-fit')
+
+    await page.getByLabel('Zoom graph in').click()
+    await page.getByLabel('Zoom graph in').click()
+    expect(await gridCoversView()).toBe(true)
+    if (testInfo.project.name === 'desktop') await qaJScreenshot(page, testInfo, 'grid-zoomed')
+    const canvas = await page.locator('.work-graph').boundingBox()
+    await page.mouse.move(canvas.x + canvas.width * .82, canvas.y + canvas.height * .78)
+    await page.mouse.down()
+    await page.mouse.move(canvas.x + canvas.width * .55, canvas.y + canvas.height * .54, { steps: 4 })
+    await page.mouse.up()
+    expect(await gridCoversView()).toBe(true)
+    if (testInfo.project.name === 'desktop') await qaJScreenshot(page, testInfo, 'grid-panned-empty-corner')
+    await page.getByLabel('Fit graph to view').click()
+
+    const liveGeometry = await page.locator('.graph-node').evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.dataset.nodeId, node.getAttribute('transform')])))
+    await page.getByRole('tab', { name: 'Replay' }).click()
+    expect(await page.locator('.graph-node').evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.dataset.nodeId, node.getAttribute('transform')])))).toEqual(liveGeometry)
+    await page.locator('[data-node-id="wp:post:339"]').click()
+    const homeEvidence = await page.locator('#place-panel .inspector-change').allTextContents()
+    expect(homeEvidence.some(row => row.includes('wp.comment.created'))).toBe(true)
+    expect(homeEvidence.some(row => row.includes('wp.comment.deleted'))).toBe(true)
+    await page.locator('#inspector-close').click()
+    await page.locator('[data-node-id="wp:site"]').click()
+    await page.getByRole('tab', { name: 'Trail' }).click()
+    await expect(page.locator('#trail-panel')).toContainText('user_count updated')
+
+    if (testInfo.project.name === 'desktop') {
+      const labels = await page.evaluate(() => {
+        const canvas = document.querySelector('.map-surface').getBoundingClientRect()
+        const laneLabels = [...document.querySelectorAll('.graph-lane-label')].map(label => label.getBoundingClientRect())
+        const edgeLabels = [...document.querySelectorAll('.graph-edge-label:not([hidden])')].map(label => label.getBoundingClientRect())
+        const plugin = document.querySelector('[data-plugin-region="altis-accelerate"] .graph-lane-label').getBoundingClientRect()
+        const territory = document.querySelector('.territory-region[data-territory="plugins"] .graph-lane-label').getBoundingClientRect()
+        const card = document.querySelector('[data-node-id="wp:option:accelerate_outbound_tracking_enabled"] .place-card').getBoundingClientRect()
+        const clipped = [...laneLabels, ...edgeLabels].filter(rect => rect.left < canvas.left - 1 || rect.right > canvas.right + 1 || rect.top < canvas.top - 1 || rect.bottom > canvas.bottom + 1).length
+        const intersects = (a, b) => !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top)
+        return { clipped, territoryPluginOverlap: intersects(territory, plugin), pluginCardOverlap: intersects(plugin, card) }
+      })
+      expect(labels).toEqual({ clipped: 0, territoryPluginOverlap: false, pluginCardOverlap: false })
+    }
+  } finally {
+    await siteDaemon.close('layman-test')
+    fs.rmSync(trailRoot, { recursive: true, force: true })
+  }
+})
+
+test('comment and user evidence speak the card grammar and surface observer drift', async ({ page }, testInfo) => {
+  test.slow()
+  const trailRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aphelion-member-evidence-'))
+  const siteDaemon = await startDaemon({ target: 'http://localhost:8081', targetType: 'site', trailDirectory: path.join(trailRoot, 'trails'), port: 6440, watch: false })
+  const ingest = (event, ts) => fetch(`${siteDaemon.url}/ingest`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(ts ? { ...event, ts } : event),
+  })
+  const parent = { postId: 339, postType: 'page', postTitle: 'Home' }
+  const events = [
+    { source: 'sidecar', kind: 'runtime.site.identity', data: { siteName: 'Accelerate Demo', channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.post.updated', data: { requestId: 'page-state', objectType: 'post', objectId: 339, postType: 'page', title: 'Home', status: 'publish', blockCount: 134, channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.user.created', data: { requestId: 'user-create', objectType: 'user', objectId: 10, displayName: 'Aphelion QA Editor', roles: ['subscriber'], channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.user.role_changed', data: { requestId: 'user-role', objectType: 'user', objectId: 10, displayName: 'Aphelion QA Editor', role: 'editor', roles: ['editor'], channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.comment.created', data: { requestId: 'comment-create', objectType: 'comment', objectId: 91, ...parent, commentStatus: 'approve', channel: 'wp-cli' } },
+    { source: 'wp', kind: 'wp.comment.status_changed', data: { requestId: 'comment-delete', objectType: 'comment', objectId: 91, ...parent, commentStatus: 'trash', channel: 'wp-cli' }, ts: 2_000 },
+    { source: 'wp', kind: 'wp.comment.deleted', data: { requestId: 'comment-delete', objectType: 'comment', objectId: 91, ...parent, commentStatus: 'delete', channel: 'wp-cli' }, ts: 2_000 },
+    { source: 'wp', kind: 'wp.user.deleted', data: { requestId: 'user-delete', objectType: 'user', objectId: 10, displayName: 'Aphelion QA Editor', roles: ['editor'], channel: 'wp-cli' } },
+    { source: 'sidecar', kind: 'runtime.observer.version', data: { reportedVersion: '0.0.9', expectedVersion: '0.1.0', status: 'outdated', channel: 'wp-cli', transport: 'docker-exec' } },
+    { source: 'session', kind: 'session.end', data: { reason: 'fixture-complete' } },
+  ]
+  try {
+    for (const event of events) await ingest(event, event.ts)
+    await page.goto(siteDaemon.url)
+
+    await expect(page.locator('#observer-warning')).toBeVisible()
+    await expect(page.locator('#observer-warning')).toContainText('Observer out of date')
+    await expect(page.locator('#observer-warning')).toContainText('Some activity may not be recorded.')
+
+    const home = page.locator('[data-node-id="wp:post:339"]')
+    await expect(home.locator('.place-type')).toHaveText('Page')
+    await expect(home.locator('.place-name')).toHaveText('Home')
+    await expect(home.locator('.place-state')).toHaveText('Publish · 134 blocks')
+    const homeRows = home.locator('.change-row')
+    await expect(homeRows).toHaveCount(3)
+    expect(await homeRows.allTextContents()).toEqual(expect.arrayContaining([
+      expect.stringContaining('Updated'),
+      expect.stringContaining('Comment added'),
+      expect.stringContaining('Comment removed'),
+    ]))
+    expect((await homeRows.allTextContents()).filter(text => text.includes('Comment removed'))).toHaveLength(1)
+    await expect(page.locator('[data-node-id="wp:comment:91"]')).toHaveCount(0)
+
+    const user = page.locator('[data-node-id="wp:user:10"]')
+    await expect(user).toHaveAttribute('data-size-tier', 'tombstone')
+    await expect(user.locator('.place-state')).toBeHidden()
+    await expect(user.locator('.change-row')).toHaveCount(0)
+
+    await user.click()
+    await expect(page.locator('#place-panel .inspector-facts div').filter({ hasText: 'Present state' })).toContainText('Deleted')
+    const userEvidence = await page.locator('#place-panel .inspector-change').allTextContents()
+    expect(userEvidence.some(text => text.includes('Created'))).toBe(true)
+    expect(userEvidence.some(text => text.includes('Role changed to Editor'))).toBe(true)
+    expect(userEvidence.some(text => text.includes('Deleted'))).toBe(true)
+    await page.locator('#inspector-close').click()
+
+    await home.click()
+    const evidence = await page.locator('#place-panel .inspector-change').allTextContents()
+    expect(evidence.some(text => text.includes('wp.comment.created'))).toBe(true)
+    expect(evidence.some(text => text.includes('wp.comment.status_changed') && text.includes('wp.comment.deleted'))).toBe(true)
+    await page.locator('#inspector-close').click()
+
+    await qaKScreenshot(page, testInfo, 'member-evidence-and-observer-warning')
+  } finally {
+    await siteDaemon.close('member-evidence-test')
     fs.rmSync(trailRoot, { recursive: true, force: true })
   }
 })
