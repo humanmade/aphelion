@@ -35,6 +35,8 @@ files: [src/sidecar/**, src/mu-plugin/**]
   from: layman QA
 - [x] Record comment parent identity and report deployed observer-version drift {#observe-site-member-context}
   from: member-evidence QA
+- [x] Observe generic MCP stdio calls without injecting into the server {#observe-site-mcp-tap}
+  from: DEC-010
 
 ## Show the work live {#board}
 tech: adapt upstream public/index.html; split into concat-able sources
@@ -64,6 +66,8 @@ files: [src/board/**]
   from: layman QA
 - [x] Render comment member verbs, deduplicate lifecycle hooks, and retain user history in the inspector {#board-member-evidence}
   from: member-evidence QA
+- [x] Label bounded object-and-time MCP confirmation inference in evidence {#board-mcp-inference}
+  from: DEC-010
 
 ## Replay any session {#replay}
 tech: scrub UI over trail; sparse snapshot index for seeking

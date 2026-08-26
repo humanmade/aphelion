@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildSiteTopology, displayChannel, FULL_FIT_PLACE_LIMIT, groupTopologyChanges, layoutSiteTopology, OVERVIEW_IDLE_EDGE_LIMIT, resolveTopologyEntity, routeContainmentElbows, routeSiteTopologyEdges, siteCardHeight, topologyRunLabel, visibleTopologyEdges } from '../src/board/topology.mjs'
+import { buildSiteTopology, displayChannel, FULL_FIT_PLACE_LIMIT, groupTopologyChanges, INFERRED_CONFIRMATION_WINDOW_MS, layoutSiteTopology, OVERVIEW_IDLE_EDGE_LIMIT, resolveTopologyEntity, routeContainmentElbows, routeSiteTopologyEdges, siteCardHeight, topologyRunLabel, visibleTopologyEdges } from '../src/board/topology.mjs'
 
 const event = (seq, kind, data = {}, source = kind.startsWith('wp.') || kind.startsWith('presence.') ? 'wp' : 'agent') => ({
   v: 1,
@@ -424,6 +424,49 @@ test('an ended claim remains a visible unconfirmed version of the same place', (
   assert.equal(topology.nodes[0].visibility, 'unconfirmed')
   assert.equal(topology.nodes[0].future, false)
   assert.equal(topology.nodes[0].changes[0].status, 'unconfirmed')
+})
+
+test('MCP object hints infer a bounded confirmation without displacing exact request-ID pairing', () => {
+  const inferredClaim = { ...event(1, 'agent.action.declared', {
+    requestId: 'json-rpc-1', correlationId: 'mcp-correlation-1', objectType: 'option', name: 'blogdescription', objectHintKeys: ['option'], summary: 'Called wp.update_option', channel: 'mcp', actor: { name: 'MCP agent', version: '1.0' },
+  }, 'mcp'), ts: 1_000 }
+  const inferredEffect = { ...event(2, 'wp.option.updated', {
+    requestId: 'wordpress-effect-1', objectType: 'option', name: 'blogdescription', channel: 'rest',
+  }, 'wp'), ts: 1_000 + INFERRED_CONFIRMATION_WINDOW_MS }
+  const exactClaim = { ...event(3, 'agent.action.declared', {
+    requestId: 'shared-request', objectType: 'option', name: 'blogname', objectHintKeys: ['option'], summary: 'Called wp.update_option', channel: 'mcp',
+  }, 'mcp'), ts: 40_000 }
+  const exactEffect = { ...event(4, 'wp.option.updated', {
+    requestId: 'shared-request', objectType: 'option', name: 'blogname', channel: 'rest',
+  }, 'wp'), ts: 41_000 }
+  const topology = buildSiteTopology([inferredClaim, inferredEffect, exactClaim, exactEffect])
+  const inferred = topology.nodes.find(node => node.id === 'wp:option:blogdescription').changes
+  const exact = topology.nodes.find(node => node.id === 'wp:option:blogname').changes
+
+  assert.equal(inferred.length, 1)
+  assert.equal(inferred[0].status, 'confirmed')
+  assert.equal(inferred[0].confirmationMatch, 'inferred-object-time')
+  assert.equal(exact.length, 1)
+  assert.equal(exact[0].status, 'confirmed')
+  assert.equal(exact[0].confirmationMatch, undefined)
+})
+
+test('MCP inference never crosses its provisional 30-second window and objectless claims stay on the site flow', () => {
+  const lateClaim = { ...event(1, 'agent.action.declared', {
+    requestId: 'json-rpc-late', objectType: 'option', name: 'blogdescription', objectHintKeys: ['option'], summary: 'Called wp.update_option', channel: 'mcp',
+  }, 'mcp'), ts: 1_000 }
+  const lateEffect = { ...event(2, 'wp.option.updated', {
+    requestId: 'wordpress-late', objectType: 'option', name: 'blogdescription', channel: 'rest',
+  }, 'wp'), ts: 1_001 + INFERRED_CONFIRMATION_WINDOW_MS }
+  const late = buildSiteTopology([lateClaim, lateEffect, event(3, 'session.end', {}, 'session')]).nodes[0]
+  assert.deepEqual(late.changes.map(change => change.status), ['unconfirmed', 'confirmed'])
+  assert.equal(late.changes.some(change => change.confirmationMatch === 'inferred-object-time'), false)
+
+  const objectless = buildSiteTopology([event(1, 'agent.action.declared', {
+    requestId: 'json-rpc-no-object', objectHintKeys: [], summary: 'Called wp.search', channel: 'mcp', actor: { name: 'MCP agent' },
+  }, 'mcp')])
+  assert.equal(objectless.nodes.length, 0)
+  assert.deepEqual(objectless.edges.map(edge => [edge.from, edge.to, edge.channel, edge.flowState]), [['wp:site', 'wp:site', 'mcp', 'claimed']])
 })
 
 test('a typed create claim is born in its final lane and gains identity on confirmation', () => {

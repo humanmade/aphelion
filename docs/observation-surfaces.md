@@ -14,6 +14,7 @@ It also maps cleanly onto declared-vs-observed: a client-side tap records what t
 |---|---|---|
 | File edits in a repo | Filesystem watcher + agent hooks (adapted from upstream) | `file.write`, `tool.pre`, `tool.post` |
 | **MCP / Abilities API** | Agent-side hooks declare supported MCP/Ability calls; site-side WordPress hooks record invocation, execution, and resulting supported writes. | `mcp.ability.call` (declared) + `wp.ability.*` / `wp.*` (observed) |
+| **Generic MCP stdio** | `aphelion mcp -- <server command...>` transparently wraps a newline-delimited JSON-RPC server; it records a structural declaration without changing either stream. | `presence.*`, `agent.action.declared`, `agent.action.completed` |
 | **REST API** | The mu-plugin records completed mutating requests through `rest_request_after_callbacks`; object hooks carry post/meta detail. Application-password users can provide a stable actor. | `wp.rest.write`, plus object-specific `wp.*` effects |
 | **WP-CLI over SSH** | The mu-plugin sees supported writes tagged `WP_CLI`; an agent hook or external driver supplies the declared command family. | `cli.command.declared` + `wp.*` effects |
 | Admin UI (human, or agent-driven browser) | mu-plugin, tagged as admin-screen origin. Gutenberg's actual save is a REST request and is labeled `rest`; wp-admin heartbeat remains a separate presence channel. | `wp.*` with channel=`wp-admin` or `rest` |
@@ -27,6 +28,14 @@ It also maps cleanly onto declared-vs-observed: a client-side tap records what t
 Presence is first-class, not inferred after the fact: an open MCP session, an in-flight WP-CLI run, a burst of authenticated REST writes from an agent identity — each opens a `presence` interval on the trail (`presence.open` / `presence.close`) that the board shows as *an agent is connected to this site right now, via this channel*. WordPress heartbeat requests are coalesced to a bounded `presence.heartbeat`; missing heartbeats yield `presence.timeout`, and a returning connection yields `presence.reconnect`. Channel and transport stay separate fields.
 
 The sidecar tails from the audit file's current end when a session starts, so old site history is not duplicated into a new trail. Runtime inventory is one asynchronous, read-only WP-CLI baseline. It never blocks the board's event loop and does not misclassify baseline reads as changes.
+
+## Generic MCP stdio tap
+
+`aphelion mcp -- <server command...>` starts the server as a child process and forwards client stdin and server stdout byte-for-byte; server stderr remains the server's stderr. The tap only frame-parses a separate copy of newline-delimited JSON-RPC, so fragmented, concatenated, malformed, and large frames never alter or block agent traffic. It is fail-open: if the local daemon cannot accept an observation, Aphelion warns once, drops further tap observations, and continues proxying. The child process exit code is the proxy exit code.
+
+The initialize handshake records `presence.open` on `mcp` with the client's `clientInfo` and the server's `serverInfo`; the live connection emits at most one heartbeat every 30 seconds and closes with the stream or child-exit reason. A `tools/call` records the tool name, JSON-RPC ID, generated correlation ID, recursively collected argument **key names**, and only primitive identifier hints from well-known object fields. It never records argument values, response result bodies, or JSON-RPC error messages; a completion records only `ok` or an error code.
+
+Exact request-ID correlation remains the stronger evidence. Where an MCP claim carries a resolvable object hint but WordPress has no shared request ID, the projection may pair it with an effect at the same durable place no more than 30 seconds later in trail time. This provisional DEC-010 rule is explicitly labeled **Matched by object and time, not request ID** in the inspector; it never becomes an asserted fact. A call with no resolvable object stays as in-flight work on the MCP flow toward the site, never a fabricated place. At session end, any unmatched claim remains grey and unconfirmed.
 
 ## Escalating fidelity, by install cost
 

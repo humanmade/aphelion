@@ -270,12 +270,21 @@ export async function startDaemon(options = {}) {
   }
 }
 
-export async function relayHook(raw, options = {}) {
+async function relayDaemon(pathname, raw, options = {}) {
   const ports = options.port ? [Number(options.port)] : Array.from({ length: 15 }, (_, index) => 5330 + index)
-  await Promise.allSettled(ports.map(port => fetch(`http://127.0.0.1:${port}/hook`, {
+  const responses = await Promise.allSettled(ports.map(port => fetch(`http://127.0.0.1:${port}${pathname}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: raw,
     signal: AbortSignal.timeout(400),
   })))
+  return responses.some(response => response.status === 'fulfilled' && response.value.ok)
+}
+
+export async function relayHook(raw, options = {}) {
+  return relayDaemon('/hook', raw, options)
+}
+
+export async function relayIngest(event, options = {}) {
+  return relayDaemon('/ingest', JSON.stringify(event), options)
 }

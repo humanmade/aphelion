@@ -1397,6 +1397,7 @@ function inspectorChanges(changes, model) {
       ['Claim', change.claim?.summary || 'No declared claim'],
       ['Confirmation', change.confirmation?.summary || (change.status === 'in-flight' ? 'Awaiting WordPress' : 'No confirmation')],
       ['Evidence', change.confirmations?.map(item => item.kind).join('\n')],
+      ['Confirmation match', change.confirmationMatch === 'inferred-object-time' ? 'Matched by object and time, not request ID' : null],
       ['Name at this change', change.state?.title || change.confirmation?.state?.title],
       ['Channel', displayChannel(change.channel)],
       ['Transport', change.transport || change.confirmation?.transport || change.claim?.transport],

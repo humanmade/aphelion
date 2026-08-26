@@ -66,6 +66,7 @@ Repository observation needs no WordPress installation. Site context is progress
 | Level | Install cost | What becomes visible |
 | --- | --- | --- |
 | Repo watcher and agent hooks | None | Files, declared actions, plan progress, presence |
+| Generic MCP stdio tap — `aphelion mcp -- <server command...>` | None; wraps an existing local MCP server | MCP presence, tool-call names, structural argument keys, and declared completion without values or result bodies |
 | Read-only WP-CLI sidecar | A local WP-CLI / Docker / SSH command | Runtime baseline, drift fingerprints, site identity |
 | Audit mu-plugin | One PHP file in `wp-content/mu-plugins/` | WordPress hook effects: posts, blocks, settings, terms, menus, users, comments, plugins |
 | Plugin adapter | Optional | Product semantics beside the raw effect; Accelerate included |
@@ -102,6 +103,7 @@ background observation should be a conscious choice. See
 | `aphelion sessions [target]` | List recorded sessions and their trail paths. |
 | `aphelion timelapse <trail.jsonl>` | Render a standalone timelapse from an existing trail. |
 | `aphelion hook` | Relay one agent-hook payload from stdin to the local daemon. |
+| `aphelion mcp -- <server command...>` | Transparently observe an existing MCP stdio server. |
 
 | Option | Meaning |
 | --- | --- |
