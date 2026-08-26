@@ -4,6 +4,8 @@ import { containmentFor, observedParentRelation, TERRITORY_LABELS, TERRITORY_ORD
 
 export const FULL_FIT_PLACE_LIMIT = 24
 export const OVERVIEW_IDLE_EDGE_LIMIT = 24
+// DEC-010 provisional limit: a generic MCP claim may match an observed place only in this trail-time window.
+export const INFERRED_CONFIRMATION_WINDOW_MS = 30_000
 
 const TERMINAL_PHASES = new Set(['close', 'disconnect', 'error', 'timeout'])
 const DECLARED_KINDS = /(?:\.call|\.declared)$/
@@ -363,6 +365,7 @@ function stateData(event) {
     commentStatus: data.commentStatus || data.status || null,
     objectType: data.objectType || data.type || null,
     objectId: data.objectId ?? data.id ?? null,
+    objectHintKeys: Array.isArray(data.objectHintKeys) ? data.objectHintKeys : [],
     memberDetail,
   }
 }
@@ -495,6 +498,29 @@ function changeRecords(history, sessionEnded = false) {
       })
       openClaims.delete(id)
     } else {
+      // DEC-010: this is deliberately weaker than the exact request-ID branch above.
+      // History is already scoped to one resolved place; the bounded forward time check
+      // makes that visible relationship an inferred confirmation rather than a fact.
+      const inferred = [...changes].reverse().find(change => !change.confirmation
+        && change.state?.objectHintKeys?.length
+        && item.ts >= change.ts
+        && item.ts - change.ts <= INFERRED_CONFIRMATION_WINDOW_MS)
+      if (inferred) {
+        Object.assign(inferred, {
+          confirmation,
+          confirmations: [confirmation],
+          confirmationMatch: 'inferred-object-time',
+          verb: observedVerb(item),
+          status: 'confirmed',
+          seq: item.seq,
+          ts: item.ts,
+          channel: item.channel || inferred.channel,
+          actor: item.actor || inferred.actor,
+          transport: item.transport || inferred.transport,
+          state: item.state,
+        })
+        continue
+      }
       changes.push({
         id: `change:${id}:effect:${item.seq}`,
         requestId: item.requestId,
@@ -674,7 +700,10 @@ function analyze(events, requestTargets, topologyVersion = 1) {
 
   for (const event of events) {
     const classification = topologyEventClass(event)
-    const eventTargets = targetsForEvent(event, requestTargets)
+    const objectlessTapClaim = classification === 'declared'
+      && Array.isArray(event.data?.objectHintKeys)
+      && !resolveTopologyEntity(event)
+    const eventTargets = objectlessTapClaim ? ['wp:site'] : targetsForEvent(event, requestTargets)
     currentEdgeKey = null
     const id = requestId(event)
     const request = ensureRequest(id)
@@ -699,6 +728,7 @@ function analyze(events, requestTargets, topologyVersion = 1) {
 
     if (classification !== 'presence') {
       for (const key of eventTargets) {
+        if (key === 'wp:site') continue
         const entity = ensureEntity(key, event)
         entity.lastSeq = event.seq
         entity.lastAt = event.ts
@@ -890,7 +920,7 @@ export function buildSiteTopology(events, options = {}) {
   const blueprintRequestTargets = buildRequestTargets(blueprintEvents)
   const visibleRequestTargets = buildRequestTargets(visibleEvents)
   for (const event of visibleEvents) {
-    if (topologyEventClass(event) !== 'declared' || resolveTopologyEntity(event)) continue
+    if (topologyEventClass(event) !== 'declared' || resolveTopologyEntity(event) || Array.isArray(event.data?.objectHintKeys)) continue
     const id = requestId(event)
     const targets = blueprintRequestTargets.get(id)
     if (id && targets?.some(key => provisionalEntity(key, event))) visibleRequestTargets.set(id, [...targets])

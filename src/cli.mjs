@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { startDaemon, relayHook } from './daemon/server.mjs'
+import { runMcpProxy } from './mcp/proxy.mjs'
 import { discoverSessions } from './trail/reader.mjs'
 import { renderTimelapse } from './timelapse/render.mjs'
 
@@ -13,6 +14,7 @@ Usage:
   aphelion sessions [target]
   aphelion timelapse <trail.jsonl> [--output trail.html|trail.mp4]
   aphelion hook
+  aphelion mcp -- <server command...>
   aphelion --help
 
 Options:
@@ -34,7 +36,12 @@ Aphelion binds to 127.0.0.1, keeps its trail locally, and never controls an agen
 function parseArguments(argv) {
   const args = [...argv]
   let command = 'serve'
-  if (['serve', 'sessions', 'timelapse', 'hook'].includes(args[0])) command = args.shift()
+  if (['serve', 'sessions', 'timelapse', 'hook', 'mcp'].includes(args[0])) command = args.shift()
+  if (command === 'mcp') {
+    if (args[0] === '--help' || args[0] === '-h') return { command, options: { help: true } }
+    if (args[0] !== '--' || args.length < 2) throw new Error('mcp requires -- followed by a server command')
+    return { command, options: { serverCommand: args.slice(1) } }
+  }
   const options = { target: process.cwd(), port: 5330, open: false, integrity: false, watch: true, targetType: 'project' }
   const positional = []
   for (let index = 0; index < args.length; index++) {
@@ -95,6 +102,7 @@ export async function runCli(argv = process.argv.slice(2), io = console) {
   const { command, options } = parseArguments(argv)
   if (options.help) { io.log(HELP.trimEnd()); return 0 }
   if (options.version) { io.log('0.1.0'); return 0 }
+  if (command === 'mcp') return runMcpProxy(options.serverCommand)
   if (command === 'hook') {
     const raw = await readStdin()
     if (raw) await relayHook(raw, { port: process.env.APHELION_PORT })
