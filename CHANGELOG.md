@@ -2,6 +2,12 @@
 
 All notable changes to Aphelion are documented here.
 
+## 0.3.1 - 2026-08-26
+
+Documentation release: the README carries the audit-and-governance positioning and
+the new board hero, the CI test invocation works on the Node 20 floor, and the
+license badge reads npm's metadata. No runtime changes.
+
 ## 0.3.0 - 2026-08-26
 
 The motion and declared-half release: the board earns its flight-recorder name —
