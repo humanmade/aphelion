@@ -10,38 +10,29 @@
 
 ![A recorded agent session in the Aphelion timelapse: the site and its content, structure, plugin, and settings territories, with a WP-CLI change landing live on a plugin setting](assets/aphelion-board.jpg)
 
-An agent will tell you it updated a page, the filesystem will show you a diff, and
-WordPress will report a save — three fragments of one story, usually scattered across
-terminals and logs. Aphelion records them as a single append-only trail on your machine
-and renders that one record three ways: a live map while the agent works, a replay you
-can scrub when something needs explaining, and a timelapse worth sharing when it goes
-well. While the work happens it behaves like observability; afterward it holds up as an
-audit trail — accountability for agentic workflows with nothing leaving your machine.
-
-The board reads as a map rather than a log. Pages, settings, plugins, menus, and users
-are durable places grouped into WordPress-shaped territories, and each change lands on
-its place with light and motion within a second or two of happening. An agent's declared
-intent appears as a provisional card until WordPress independently confirms it, which
-keeps agreement quiet and makes divergence exactly the thing you notice. Any recorded
-session scrubs on the same stable map, deep-links to the moment
-(`?session=…&mode=replay&seq=…`), and can be rendered into a timelapse after the fact —
-nobody had to press record.
+Agents already operate WordPress sites. Aphelion records every move they make into an
+append-only trail on your machine, draws the work as a living map while it happens, and
+replays any moment when you need to prove what actually changed. When an agent claims
+something, WordPress's own confirmation lands beside the claim: agreement stays quiet,
+and divergence is the thing you notice. Observability while it runs, an audit trail
+forever after.
 
 What makes the record trustworthy:
 
-- **One append-only JSONL trail per session**, flushed on every event, file mode `0600`,
-  with optional SHA-256 hash chaining (`--integrity`) for tamper evidence. Every surface
-  is a projection of this file; no view owns a second history.
-- **Local by construction.** Binds to `127.0.0.1`, no accounts, no telemetry — the
-  evidence never leaves your machine, and it is never deleted automatically.
-- **Agent governance without injection.** `aphelion mcp -- <server>` wraps any MCP
-  server and records what agents *declare*, byte-transparent to their traffic: tool
-  names and argument keys, never values, content, or credentials.
-- **WordPress-native depth**: block edits fold into their page, revisions into their
-  post, plugin options into their plugin's territory, with owner-readable names
-  throughout. Sessions close on idle, and the observer warns when its mu-plugin is
-  stale rather than silently under-recording.
-- **Zero runtime dependencies** on Node 20+.
+- **One file is the truth.** A session is a single append-only JSONL file, flushed to
+  disk on every event and readable only by you, with optional SHA-256 hash chaining
+  (`--integrity`) that makes tampering detectable. The live board, replay, and
+  timelapse all render this one file, so there is no second history to diverge.
+- **Nothing leaves your machine.** The board binds to `127.0.0.1`, there is no account
+  and no telemetry, and no recording is ever deleted for you.
+- **Agents are observed, never touched.** `aphelion mcp -- <server>` passes agent
+  traffic through byte for byte while recording what they declare: tool names and
+  argument keys, never values, content, or credentials.
+- **It speaks WordPress.** Block edits belong to their page, revisions to their post,
+  plugin settings to their plugin, and every card carries a name a site owner can
+  read. Idle sessions close on their own; a stale observer warns instead of quietly
+  missing events.
+- **Zero runtime dependencies.** Node 20 or newer is the whole install.
 
 ## Quickstart
 
