@@ -3,8 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#090909">
+  <script>
+    (() => {
+      let theme = null
+      try { theme = window.localStorage.getItem('aphelion-theme') } catch {}
+      if (theme !== 'light' && theme !== 'dark') theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+      document.documentElement.dataset.theme = theme
+    })()
+  </script>
   <title>Aphelion — WordPress agent trail</title>
   <link rel="stylesheet" href="/assets/styles.css">
 </head>
@@ -20,9 +28,10 @@
   <a class="skip-link" href="#map">Skip to map</a>
   <div class="app-shell" data-app-state="loading" data-mode="live" data-inspector-open="false">
     <header class="chrome-bar" aria-label="Trail controls">
-      <div class="brand" aria-label="Aphelion">
-        <!-- Accelerate triangle mark decomposed into dots, morphing to an orb and back on loop -->
-        <svg class="brand-mark" viewBox="0 0 25 25" aria-hidden="true">
+      <div class="brand">
+        <div class="brand-identity" role="img" aria-label="Aphelion">
+          <!-- Accelerate triangle mark decomposed into dots, morphing to an orb and back on loop -->
+          <svg class="brand-mark" viewBox="0 0 25 25" aria-hidden="true">
           <g class="bm" style="--t:translate(2.5px,20.5px);--o:translate(15.3px,12.5px) scale(1.18);--oo:.98"><circle class="bd" r="1"/></g>
           <g class="bm" style="--t:translate(5.8px,20.5px);--o:translate(9.0px,15.7px) scale(1.14);--oo:.94"><circle class="bd" r="1"/></g>
           <g class="bm" style="--t:translate(9.2px,20.5px);--o:translate(13.0px,6.6px) scale(1.10);--oo:.90"><circle class="bd" r="1"/></g>
@@ -41,8 +50,13 @@
           <g class="bm" style="--t:translate(10.0px,12.6px);--o:translate(11.7px,6.6px) scale(0.55);--oo:.40"><circle class="bd" r="1"/></g>
           <g class="bm" style="--t:translate(7.5px,15.2px);--o:translate(16.1px,15.6px) scale(0.51);--oo:.36"><circle class="bd" r="1"/></g>
           <g class="bm" style="--t:translate(5.0px,17.9px);--o:translate(9.7px,12.6px) scale(0.47);--oo:.32"><circle class="bd" r="1"/></g>
-        </svg>
-        <span class="brand-word">aphelion</span>
+          </svg>
+          <span class="brand-word">aphelion</span>
+        </div>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+          <svg id="theme-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+          <svg id="theme-moon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M20 15.2A8.5 8.5 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z"/></svg>
+        </button>
       </div>
 
       <label class="session-control">

@@ -68,6 +68,8 @@ files: [src/board/**]
   from: member-evidence QA
 - [x] Label bounded object-and-time MCP confirmation inference in evidence {#board-mcp-inference}
   from: DEC-010
+- [x] Let owners switch the live and replay board between dark instrument and neutral paper registers {#board-light-mode}
+  from: work order Q
 
 ## Replay any session {#replay}
 tech: scrub UI over trail; sparse snapshot index for seeking
@@ -89,6 +91,8 @@ files: [src/timelapse/**]
   from: roadmap
 - [x] Render exported frames from the same topology and geometry as the browser board {#timelapse-parity}
   from: containment model
+- [ ] Give exported timelapses their own light register after an export-specific visual contract is defined {#timelapse-light-register}
+  from: work order Q (scoped out)
 
 ## Ship it {#ship}
 tech: npm package "aphelion" (name free as of 2026-08-25), npx-first

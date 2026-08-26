@@ -8,6 +8,7 @@ const $ = id => document.getElementById(id)
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const STANDARD_TRANSITION_MS = 300
 const SLOW_TRANSITION_MS = 500
+const THEME_STORAGE_KEY = 'aphelion-theme'
 const state = {
   mode: 'live',
   liveModel: createProjection(),
@@ -41,6 +42,33 @@ const state = {
 }
 
 const deepLinkKeys = ['session', 'mode', 'seq', 'place', 'flow', 'tab']
+
+function storedTheme() {
+  try {
+    const theme = window.localStorage.getItem(THEME_STORAGE_KEY)
+    return theme === 'light' || theme === 'dark' ? theme : null
+  } catch {
+    return null
+  }
+}
+
+function systemTheme() {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+function applyTheme(theme, { persist = false } = {}) {
+  const resolvedTheme = theme === 'dark' ? 'dark' : 'light'
+  document.documentElement.dataset.theme = resolvedTheme
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', resolvedTheme === 'dark' ? '#090909' : '#f7f7f7')
+  $('theme-toggle').setAttribute('aria-label', `Switch to ${resolvedTheme === 'dark' ? 'light' : 'dark'} theme`)
+  $('theme-toggle').setAttribute('title', `Switch to ${resolvedTheme === 'dark' ? 'light' : 'dark'} theme`)
+  $('theme-toggle').setAttribute('aria-pressed', String(resolvedTheme === 'dark'))
+  $('theme-sun').hidden = resolvedTheme !== 'light'
+  $('theme-moon').hidden = resolvedTheme !== 'dark'
+  if (persist) {
+    try { window.localStorage.setItem(THEME_STORAGE_KEY, resolvedTheme) } catch {}
+  }
+}
 
 function node(tag, className, text) {
   const element = document.createElement(tag)
@@ -1449,6 +1477,12 @@ for (const button of document.querySelectorAll('.mode-switch button[data-mode]')
   event.stopPropagation()
   setMode(button.dataset.mode)
 })
+$('theme-toggle').addEventListener('click', () => {
+  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark', { persist: true })
+})
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  if (!storedTheme()) applyTheme(systemTheme())
+})
 for (const button of document.querySelectorAll('[data-inspector-tab]')) button.addEventListener('click', event => {
   event.preventDefault()
   event.stopPropagation()
@@ -1473,6 +1507,7 @@ document.addEventListener('keydown', event => {
   if (event.key === ' ' && state.mode !== 'live' && event.target === document.body) { event.preventDefault(); togglePlayback() }
 })
 
+applyTheme(storedTheme() || systemTheme())
 loadLive().then(applyDeepLink).then(connectEvents).catch(error => {
   document.querySelector('.app-shell').dataset.appState = 'error'
   const empty = node('div', 'empty-board')
