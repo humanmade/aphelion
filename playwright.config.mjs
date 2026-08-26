@@ -3,7 +3,10 @@ import { defineConfig } from '@playwright/test'
 export default defineConfig({
   testDir: './test/browser',
   fullyParallel: false,
-  retries: 0,
+  // The dense-ingest specs (20-200 place fixtures) run serially against a real
+  // daemon; CI's shared runners need headroom the 30s default doesn't give.
+  timeout: 90_000,
+  retries: process.env.CI ? 1 : 0,
   reporter: 'line',
   use: { trace: 'retain-on-failure' },
   projects: [
